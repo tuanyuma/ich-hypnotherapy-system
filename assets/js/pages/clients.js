@@ -33,7 +33,8 @@ export async function renderClientsPage(container, route) {
 
 async function renderClientsListView(container, route) {
   const actor = getUser();
-  const state = { page: 1, limit: 20, q: '', status: '', source_channel: '' };
+  const initialQ = (route && route.query && route.query.q) ? String(route.query.q).trim() : '';
+  const state = { page: 1, limit: 20, q: initialQ, status: '', source_channel: '' };
 
   container.innerHTML = `
     <section class="card">
@@ -67,6 +68,7 @@ async function renderClientsListView(container, route) {
   const listWrap = container.querySelector('#cln-list-wrap');
   const pagWrap = container.querySelector('#cln-pagination');
   const searchEl = container.querySelector('#cln-search');
+  if (initialQ) searchEl.value = initialQ;
   const statusEl = container.querySelector('#cln-filter-status');
   const sourceEl = container.querySelector('#cln-filter-source');
 

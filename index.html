@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0F5C5E">
+  <meta name="theme-color" content="#2563EB">
   <meta name="description" content="Sistem Manajemen Klinik Internal ICH HYPNOTHERAPY">
   <title>ICH HYPNOTHERAPY — Sistem Klinik Internal</title>
   <link rel="manifest" href="./manifest.json">
@@ -32,7 +32,7 @@
         <div class="brand-mark" aria-hidden="true">ICH</div>
         <div class="brand-text">
           <div id="sidebar-clinic-name" class="brand-title">ICH HYPNOTHERAPY</div>
-          <div class="brand-sub">Klinik Internal</div>
+          <div class="brand-sub">Portal Klinik Internal</div>
         </div>
         <button id="btn-close-drawer" class="icon-btn mobile-only" type="button" aria-label="Tutup menu">✕</button>
       </div>
@@ -63,14 +63,19 @@
       <header class="topbar">
         <div class="topbar-left">
           <button id="btn-open-drawer" class="icon-btn mobile-only" type="button" aria-label="Buka menu navigasi">☰</button>
-          <div>
+          <form id="topbar-search-form" class="topbar-search" role="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="topbar-search-input" type="search" aria-label="Cari klien berdasarkan nama, kode, atau WhatsApp" placeholder="Cari klien (Nama, Kode ICH, WA)...">
+          </form>
+          <div id="topbar-title-block">
             <h1 id="page-title" class="page-title">Dashboard</h1>
             <p id="page-subtitle" class="page-subtitle"></p>
           </div>
         </div>
         <div class="topbar-right">
           <span id="topbar-role-badge" class="badge badge-primary"></span>
-          <button id="btn-refresh-page" class="btn btn-ghost btn-sm" type="button" title="Muat ulang data">↻ Muat Ulang</button>
+          <button id="btn-refresh-page" class="icon-btn" type="button" title="Muat ulang data" aria-label="Muat ulang halaman">↻</button>
+          <button id="btn-topbar-cta" class="btn btn-primary btn-sm" type="button" hidden>+ Klien Baru</button>
         </div>
       </header>
 

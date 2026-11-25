@@ -7,6 +7,7 @@ import { registerApiAuthHooks, apiHealth, apiCall } from './api.js';
 import {
   getToken,
   getUser,
+  can,
   setSession,
   clearSession,
   setSessionClearedHandler,
@@ -157,6 +158,7 @@ function syncUserShellMeta() {
   const nameEl = document.getElementById('sidebar-user-name');
   const roleEl = document.getElementById('sidebar-user-role');
   const topBadge = document.getElementById('topbar-role-badge');
+  const topCta = document.getElementById('btn-topbar-cta');
 
   if (brandEl) brandEl.textContent = clinicName;
   if (user) {
@@ -164,6 +166,7 @@ function syncUserShellMeta() {
     if (nameEl) nameEl.textContent = user.full_name || user.username;
     if (roleEl) roleEl.textContent = roleLabel(user.role);
     if (topBadge) topBadge.textContent = roleLabel(user.role);
+    if (topCta) topCta.hidden = !can('clients:add');
   }
 }
 
@@ -381,6 +384,13 @@ async function bootstrap() {
   document.getElementById('btn-logout')?.addEventListener('click', () => performLogout());
   document.getElementById('btn-change-password')?.addEventListener('click', () => openChangePasswordModal());
   document.getElementById('btn-refresh-page')?.addEventListener('click', () => renderCurrentRoute());
+  document.getElementById('btn-topbar-cta')?.addEventListener('click', () => navigate('#/clients?new=1'));
+  document.getElementById('topbar-search-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = document.getElementById('topbar-search-input');
+    const q = input ? input.value.trim() : '';
+    navigate(q ? `#/clients?q=${encodeURIComponent(q)}` : '#/clients');
+  });
 
   window.addEventListener('hashchange', () => renderCurrentRoute());
   initIdleActivityWatcher();

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0F5C5E">
+  <meta name="description" content="Sistem Manajemen Klinik Internal ICH HYPNOTHERAPY">
+  <title>ICH HYPNOTHERAPY — Sistem Klinik Internal</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./assets/icons/icon.svg">
+  <link rel="apple-touch-icon" href="./assets/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./assets/css/tokens.css">
+  <link rel="stylesheet" href="./assets/css/app.css">
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Lewati ke konten utama</a>
+
+  <div id="offline-banner" class="offline-banner" role="status" aria-live="polite" hidden>
+    Koneksi internet terputus. Data tidak dapat dimuat atau disimpan sampai koneksi kembali tersambung.
+  </div>
+
+  <!-- Auth Screen (Login & Wajib Ganti Password) -->
+  <div id="auth-root" class="auth-root" hidden></div>
+
+  <!-- Main Authenticated Application Shell -->
+  <div id="app-shell" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Navigasi utama">
+      <div class="sidebar-brand">
+        <div class="brand-mark" aria-hidden="true">ICH</div>
+        <div class="brand-text">
+          <div id="sidebar-clinic-name" class="brand-title">ICH HYPNOTHERAPY</div>
+          <div class="brand-sub">Klinik Internal</div>
+        </div>
+        <button id="btn-close-drawer" class="icon-btn mobile-only" type="button" aria-label="Tutup menu">✕</button>
+      </div>
+
+      <nav id="sidebar-nav" class="sidebar-nav" aria-label="Menu modul"></nav>
+
+      <div class="sidebar-footer">
+        <button id="btn-install-pwa" class="btn btn-soft btn-block" type="button" hidden>
+          + Pasang Aplikasi (PWA)
+        </button>
+        <div class="user-card">
+          <div class="user-avatar" id="sidebar-user-avatar" aria-hidden="true">U</div>
+          <div class="user-meta">
+            <div id="sidebar-user-name" class="user-name">-</div>
+            <div id="sidebar-user-role" class="user-role">-</div>
+          </div>
+        </div>
+        <div class="sidebar-actions">
+          <button id="btn-change-password" class="btn btn-ghost btn-sm" type="button">Ganti Sandi</button>
+          <button id="btn-logout" class="btn btn-danger-ghost btn-sm" type="button">Keluar</button>
+        </div>
+      </div>
+    </aside>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+
+    <div class="app-main-wrap">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="btn-open-drawer" class="icon-btn mobile-only" type="button" aria-label="Buka menu navigasi">☰</button>
+          <div>
+            <h1 id="page-title" class="page-title">Dashboard</h1>
+            <p id="page-subtitle" class="page-subtitle"></p>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="topbar-role-badge" class="badge badge-primary"></span>
+          <button id="btn-refresh-page" class="btn btn-ghost btn-sm" type="button" title="Muat ulang data">↻ Muat Ulang</button>
+        </div>
+      </header>
+
+      <main id="main-content" class="main-content" tabindex="-1"></main>
+    </div>
+
+    <nav id="bottom-nav" class="bottom-nav mobile-only" aria-label="Navigasi cepat bawah"></nav>
+  </div>
+
+  <!-- Global Modal Container -->
+  <div id="modal-root" class="modal-root" role="dialog" aria-modal="true" hidden></div>
+
+  <!-- Global Toast Container -->
+  <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="./assets/js/app.js"></script>
+</body>
+</html>

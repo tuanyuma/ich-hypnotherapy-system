@@ -1,0 +1,529 @@
+/**
+ * pages/clients.js — Data Induk Klien & Halaman Detail Klien (F5):
+ * - Daftar klien (search global Nama/ID/WA, filter status & sumber informasi, pagination)
+ * - Form CRUD klien (anti-duplikat WA dengan tautan langsung ke klien bentrok, sumber OTHER wajib detail)
+ * - Detail Klien (#/clients/:id): biodata + tab Jadwal, Assessment (sesuai izin), & RME (sesuai izin).
+ */
+
+import { apiCall } from '../api.js';
+import { can, getUser } from '../auth.js';
+import { navigate } from '../router.js';
+import {
+  esc,
+  SOURCE_CHANNEL_LABELS,
+  statusBadge,
+  formatDateId,
+  renderSkeletonTable,
+  renderPagination,
+  openModal,
+  closeModal,
+  confirmDialog,
+  clearFieldErrors,
+  showFieldErrors,
+  toast
+} from '../ui.js';
+
+export async function renderClientsPage(container, route) {
+  if (route && route.param) {
+    await renderClientDetailView(container, route.param);
+    return;
+  }
+  await renderClientsListView(container, route);
+}
+
+async function renderClientsListView(container, route) {
+  const actor = getUser();
+  const state = { page: 1, limit: 20, q: '', status: '', source_channel: '' };
+
+  container.innerHTML = `
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Data Induk Klien</h2>
+          <p class="card-desc">1 Klien = 1 Stable ID (anti duplikat nomor WhatsApp). Kolom Terakhir Sesi sinkron otomatis dari RME.</p>
+        </div>
+        ${can('clients:add') ? '<button type="button" class="btn btn-primary" id="btn-add-client">+ Klien Baru</button>' : ''}
+      </div>
+
+      <div class="filter-bar">
+        <input type="search" id="cln-search" class="input" placeholder="Cari nama, kode ICH, ID, atau WhatsApp...">
+        <select id="cln-filter-status" class="select" aria-label="Filter status klien">
+          <option value="">Semua Status</option>
+          <option value="BARU_DAFTAR">Baru Daftar</option>
+          <option value="DALAM_PROSES">Dalam Proses</option>
+          <option value="SELESAI">Selesai</option>
+        </select>
+        <select id="cln-filter-source" class="select" aria-label="Filter sumber informasi">
+          <option value="">Semua Sumber Info</option>
+          ${Object.entries(SOURCE_CHANNEL_LABELS).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div id="cln-list-wrap">${renderSkeletonTable(5)}</div>
+      <div id="cln-pagination"></div>
+    </section>
+  `;
+
+  const listWrap = container.querySelector('#cln-list-wrap');
+  const pagWrap = container.querySelector('#cln-pagination');
+  const searchEl = container.querySelector('#cln-search');
+  const statusEl = container.querySelector('#cln-filter-status');
+  const sourceEl = container.querySelector('#cln-filter-source');
+
+  async function loadClients() {
+    listWrap.innerHTML = renderSkeletonTable(5);
+    try {
+      const res = await apiCall('clients.list', {
+        page: state.page,
+        limit: state.limit,
+        q: state.q,
+        filters: {
+          status: state.status || undefined,
+          source_channel: state.source_channel || undefined
+        }
+      });
+      const items = (res.data && res.data.items) || [];
+      renderTable(items);
+      renderPagination(pagWrap, res.meta, (p) => {
+        state.page = p;
+        loadClients();
+      });
+    } catch (err) {
+      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat data klien</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      toast(err.message, 'danger');
+    }
+  }
+
+  function renderTable(items) {
+    if (items.length === 0) {
+      listWrap.innerHTML = `
+        <div class="empty-state">
+          <p class="empty-state-title">Belum ada data klien</p>
+          <p class="empty-state-desc">Tambahkan klien baru atau ubah filter pencarian Anda.</p>
+        </div>
+      `;
+      return;
+    }
+
+    listWrap.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Klien &amp; Kode</th>
+              <th>WhatsApp</th>
+              <th>Sumber Info</th>
+              <th>Terapis Utama</th>
+              <th>Status</th>
+              <th>Terakhir Sesi</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((c) => `
+              <tr>
+                <td>
+                  <div><button type="button" class="link-btn" data-detail-cln="${esc(c.client_id)}">${esc(c.full_name)}</button></div>
+                  <div class="text-xs text-muted font-mono">${esc(c.client_code)}</div>
+                </td>
+                <td class="font-mono text-sm">
+                  <a href="https://wa.me/${esc(c.wa_normalized)}" target="_blank" rel="noopener noreferrer" class="link-btn">${esc(c.wa_normalized || c.phone_raw)}</a>
+                </td>
+                <td class="text-sm">
+                  ${esc(SOURCE_CHANNEL_LABELS[c.source_channel] || c.source_channel || '-')}
+                  ${c.source_detail ? `<div class="text-xs text-muted">${esc(c.source_detail)}</div>` : ''}
+                </td>
+                <td>${esc(c.primary_therapist_name || '-')}</td>
+                <td>${statusBadge('client', c.status)}</td>
+                <td class="text-xs">
+                  <div><strong>${esc(formatDateId(c.last_session_at))}</strong></div>
+                  <div class="text-muted">${esc(c.total_sessions || 0)} sesi tercatat</div>
+                </td>
+                <td>
+                  <div class="table-actions">
+                    <button type="button" class="btn btn-soft btn-sm" data-detail-cln="${esc(c.client_id)}">Detail</button>
+                    ${can('clients:edit') ? `<button type="button" class="btn btn-secondary btn-sm" data-edit-cln="${esc(c.client_id)}">Edit</button>` : ''}
+                    ${can('clients:delete') ? `<button type="button" class="btn btn-danger-ghost btn-sm" data-del-cln="${esc(c.client_id)}">Hapus</button>` : ''}
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const byId = Object.fromEntries(items.map((c) => [c.client_id, c]));
+    listWrap.querySelectorAll('[data-detail-cln]').forEach((btn) => {
+      btn.addEventListener('click', () => navigate(`#/clients/${btn.dataset.detailCln}`));
+    });
+    listWrap.querySelectorAll('[data-edit-cln]').forEach((btn) => {
+      btn.addEventListener('click', () => openClientFormModal(byId[btn.dataset.editCln], actor, loadClients));
+    });
+    listWrap.querySelectorAll('[data-del-cln]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const c = byId[btn.dataset.delCln];
+        const ok = await confirmDialog({
+          title: 'Hapus Data Klien',
+          message: `Hapus (soft delete) klien "${c.full_name}" (${c.client_code})?`,
+          confirmLabel: 'Ya, Hapus',
+          danger: true
+        });
+        if (!ok) return;
+        try {
+          await apiCall('clients.delete', { client_id: c.client_id, expected_version: c.version }, { write: true });
+          toast('Data klien dihapus.', 'success');
+          loadClients();
+        } catch (err) {
+          toast(err.message, 'danger');
+        }
+      });
+    });
+  }
+
+  container.querySelector('#btn-add-client')?.addEventListener('click', () => {
+    openClientFormModal(null, actor, loadClients);
+  });
+
+  let debounce = null;
+  searchEl.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { state.q = searchEl.value.trim(); state.page = 1; loadClients(); }, 250);
+  });
+  statusEl.addEventListener('change', () => { state.status = statusEl.value; state.page = 1; loadClients(); });
+  sourceEl.addEventListener('change', () => { state.source_channel = sourceEl.value; state.page = 1; loadClients(); });
+
+  await loadClients();
+
+  if (route && route.query && route.query.new === '1' && can('clients:add')) {
+    openClientFormModal(null, actor, loadClients);
+  }
+}
+
+async function openClientFormModal(existing, actor, onSaved) {
+  const isEdit = Boolean(existing);
+  const isTherapist = actor && actor.role === 'THERAPIST';
+  let therapistOptions = [];
+  if (!isTherapist) {
+    try {
+      const optRes = await apiCall('therapists.options', { active_only: true });
+      therapistOptions = (optRes.data && optRes.data.items) || [];
+    } catch (_) {
+      therapistOptions = [];
+    }
+  }
+
+  const currentSource = existing ? existing.source_channel : 'WHATSAPP';
+
+  const modal = openModal({
+    title: isEdit ? `Edit Klien — ${existing.full_name}` : 'Tambah Klien Baru',
+    size: 'lg',
+    bodyHtml: `
+      <form id="client-form" novalidate>
+        <div id="client-dup-banner" class="auth-notice" hidden></div>
+        <div class="form-grid form-grid-2">
+          <div class="field">
+            <label for="c-name">Nama Lengkap <span class="req-star">*</span></label>
+            <input id="c-name" name="full_name" class="input" type="text" value="${esc(existing ? existing.full_name : '')}" required>
+          </div>
+          <div class="field">
+            <label for="c-wa">No. WhatsApp <span class="req-star">*</span></label>
+            <input id="c-wa" name="phone_raw" class="input" type="tel" value="${esc(existing ? (existing.phone_raw || existing.wa_normalized) : '')}" placeholder="0812-3456-7890" required>
+            <span class="field-hint">Otomatis dinormalisasi (628...) dan dicek anti-duplikat.</span>
+          </div>
+          <div class="field">
+            <label for="c-gender">Jenis Kelamin</label>
+            <select id="c-gender" name="gender" class="select">
+              <option value="">-- Pilih --</option>
+              <option value="L" ${existing && existing.gender === 'L' ? 'selected' : ''}>Laki-laki</option>
+              <option value="P" ${existing && existing.gender === 'P' ? 'selected' : ''}>Perempuan</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="c-birth">Tanggal Lahir</label>
+            <input id="c-birth" name="birth_date" class="input" type="date" value="${esc(existing ? existing.birth_date : '')}">
+          </div>
+          <div class="field">
+            <label for="c-email">Email</label>
+            <input id="c-email" name="email" class="input" type="email" value="${esc(existing ? existing.email : '')}">
+          </div>
+          <div class="field">
+            <label for="c-source">Sumber Informasi <span class="req-star">*</span></label>
+            <select id="c-source" name="source_channel" class="select">
+              ${Object.entries(SOURCE_CHANNEL_LABELS).map(([k, v]) => `
+                <option value="${esc(k)}" ${currentSource === k ? 'selected' : ''}>${esc(v)}</option>
+              `).join('')}
+            </select>
+          </div>
+          <div class="field" id="c-source-detail-wrap">
+            <label for="c-source-detail">Detail Sumber <span id="c-source-req" class="req-star" ${currentSource === 'OTHER' ? '' : 'hidden'}>*</span></label>
+            <input id="c-source-detail" name="source_detail" class="input" type="text"
+              value="${esc(existing ? existing.source_detail : '')}" placeholder="mis. Direkomendasikan dr. Andi / iklan IG">
+          </div>
+          ${!isTherapist ? `
+            <div class="field">
+              <label for="c-therapist">Terapis Utama</label>
+              <select id="c-therapist" name="primary_therapist_id" class="select">
+                <option value="">-- Belum Ditentukan --</option>
+                ${therapistOptions.map((t) => `
+                  <option value="${esc(t.therapist_id)}" ${existing && existing.primary_therapist_id === t.therapist_id ? 'selected' : ''}>
+                    ${esc(t.full_name)} (${esc(t.code)})
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+          ` : `
+            <div class="field">
+              <label>Terapis Utama</label>
+              <input class="input" type="text" value="Otomatis tertaut ke profil Anda" disabled>
+            </div>
+          `}
+          <div class="field">
+            <label for="c-status">Status Klien</label>
+            <select id="c-status" name="status" class="select">
+              <option value="BARU_DAFTAR" ${(!existing || existing.status === 'BARU_DAFTAR') ? 'selected' : ''}>Baru Daftar</option>
+              <option value="DALAM_PROSES" ${existing && existing.status === 'DALAM_PROSES' ? 'selected' : ''}>Dalam Proses</option>
+              <option value="SELESAI" ${existing && existing.status === 'SELESAI' ? 'selected' : ''}>Selesai</option>
+            </select>
+          </div>
+          <div class="field field-span-full">
+            <label for="c-address">Alamat</label>
+            <input id="c-address" name="address" class="input" type="text" value="${esc(existing ? existing.address : '')}">
+          </div>
+          <div class="field field-span-full">
+            <label for="c-notes">Catatan Administratif</label>
+            <textarea id="c-notes" name="notes" class="textarea" rows="3">${esc(existing ? existing.notes : '')}</textarea>
+          </div>
+        </div>
+      </form>
+    `,
+    footerHtml: `
+      <button type="button" class="btn btn-secondary" data-modal-close>Batal</button>
+      <button type="submit" form="client-form" class="btn btn-primary" id="btn-save-client">${isEdit ? 'Simpan Perubahan' : 'Simpan Klien'}</button>
+    `
+  });
+
+  const form = modal.querySelector('#client-form');
+  const sourceEl = modal.querySelector('#c-source');
+  const reqStar = modal.querySelector('#c-source-req');
+  const dupBanner = modal.querySelector('#client-dup-banner');
+  const saveBtn = modal.querySelector('#btn-save-client');
+
+  sourceEl.addEventListener('change', () => {
+    reqStar.hidden = sourceEl.value !== 'OTHER';
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearFieldErrors(form);
+    dupBanner.hidden = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Menyimpan...';
+
+    const payload = {
+      full_name: form.full_name.value.trim(),
+      phone_raw: form.phone_raw.value.trim(),
+      gender: form.gender.value,
+      birth_date: form.birth_date.value,
+      email: form.email.value.trim(),
+      address: form.address.value.trim(),
+      source_channel: form.source_channel.value,
+      source_detail: form.source_detail.value.trim(),
+      status: form.status.value,
+      notes: form.notes.value.trim()
+    };
+    if (!isTherapist && form.primary_therapist_id) {
+      payload.primary_therapist_id = form.primary_therapist_id.value;
+    }
+
+    try {
+      if (isEdit) {
+        payload.client_id = existing.client_id;
+        payload.expected_version = existing.version;
+        await apiCall('clients.update', payload, { write: true });
+        toast('Data klien berhasil diperbarui.', 'success');
+      } else {
+        await apiCall('clients.create', payload, { write: true });
+        toast('Klien baru berhasil didaftarkan.', 'success');
+      }
+      closeModal();
+      onSaved();
+    } catch (err) {
+      if (err.fields) showFieldErrors(form, err.fields);
+      if (err.code === 'DUPLICATE' && err.conflict && err.conflict.client_id) {
+        dupBanner.innerHTML = `
+          <div><strong>Duplikat Terdeteksi:</strong> ${esc(err.message)}</div>
+          <button type="button" class="btn btn-soft btn-sm mt-2" id="btn-open-conflict-cln">
+            Buka Profil ${esc(err.conflict.full_name)} (${esc(err.conflict.client_code)})
+          </button>
+        `;
+        dupBanner.hidden = false;
+        dupBanner.querySelector('#btn-open-conflict-cln')?.addEventListener('click', () => {
+          closeModal();
+          navigate(`#/clients/${err.conflict.client_id}`);
+        });
+      }
+      toast(err.message, 'danger');
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = isEdit ? 'Simpan Perubahan' : 'Simpan Klien';
+    }
+  });
+}
+
+// ============================================================================
+// Halaman Detail Klien (#/clients/:id)
+// ============================================================================
+
+async function renderClientDetailView(container, clientId) {
+  const actor = getUser();
+  container.innerHTML = renderSkeletonTable(6);
+
+  try {
+    const res = await apiCall('clients.detail', { client_id: clientId });
+    const detail = res.data;
+    const c = detail.client;
+    const appointments = detail.appointments || [];
+    const hasAssessments = Array.isArray(detail.assessments) && can('assessments:view');
+    const hasRme = Array.isArray(detail.rme_sessions) && can('rme:view');
+
+    document.getElementById('page-title').textContent = `Detail Klien — ${c.full_name}`;
+    document.getElementById('page-subtitle').textContent = `${c.client_code} • ${c.wa_normalized}`;
+
+    container.innerHTML = `
+      <div class="flex-between mb-3">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-back-clients">← Kembali ke Data Klien</button>
+        <div class="flex-gap">
+          <a href="https://wa.me/${esc(c.wa_normalized)}" target="_blank" rel="noopener noreferrer" class="btn btn-wa btn-sm">Chat WA</a>
+          ${can('clients:edit') ? '<button type="button" class="btn btn-secondary btn-sm" id="btn-edit-detail-cln">Edit Biodata</button>' : ''}
+          ${can('appointments:add') ? '<button type="button" class="btn btn-soft btn-sm" id="btn-quick-apt">+ Jadwal</button>' : ''}
+          ${can('assessments:add') ? '<button type="button" class="btn btn-soft btn-sm" id="btn-quick-asm">+ Assessment</button>' : ''}
+          ${can('rme:add') ? '<button type="button" class="btn btn-primary btn-sm" id="btn-quick-rme">+ Sesi RME</button>' : ''}
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">${esc(c.full_name)} <span class="font-mono text-muted">(${esc(c.client_code)})</span></h2>
+            <p class="card-desc">Terakhir sesi: <strong>${esc(formatDateId(c.last_session_at))}</strong> • Total sesi: <strong>${esc(c.total_sessions || 0)}</strong></p>
+          </div>
+          ${statusBadge('client', c.status)}
+        </div>
+
+        <div class="form-grid form-grid-3 text-sm">
+          <div><span class="text-xs text-muted">WhatsApp</span><div class="font-mono">${esc(c.wa_normalized || c.phone_raw || '-')}</div></div>
+          <div><span class="text-xs text-muted">Jenis Kelamin / Tgl Lahir</span><div>${c.gender === 'L' ? 'Laki-laki' : c.gender === 'P' ? 'Perempuan' : '-'} • ${esc(formatDateId(c.birth_date))}</div></div>
+          <div><span class="text-xs text-muted">Email</span><div>${esc(c.email || '-')}</div></div>
+          <div><span class="text-xs text-muted">Sumber Informasi</span><div>${esc(SOURCE_CHANNEL_LABELS[c.source_channel] || c.source_channel || '-')} ${c.source_detail ? `(${esc(c.source_detail)})` : ''}</div></div>
+          <div><span class="text-xs text-muted">Terapis Utama</span><div>${esc(c.primary_therapist_name || '-')}</div></div>
+          <div><span class="text-xs text-muted">Alamat</span><div>${esc(c.address || '-')}</div></div>
+          ${c.notes ? `<div class="field-span-full"><span class="text-xs text-muted">Catatan</span><div>${esc(c.notes)}</div></div>` : ''}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="tabs-bar" role="tablist">
+          <button type="button" class="tab-btn is-active" data-tab="appointments" role="tab">Jadwal (${appointments.length})</button>
+          ${hasAssessments ? `<button type="button" class="tab-btn" data-tab="assessments" role="tab">Assessment Awal (${detail.assessments.length})</button>` : ''}
+          ${hasRme ? `<button type="button" class="tab-btn" data-tab="rme" role="tab">RME / Sesi Terapi (${detail.rme_sessions.length})</button>` : ''}
+        </div>
+        <div id="client-tab-content"></div>
+      </section>
+    `;
+
+    const tabContent = container.querySelector('#client-tab-content');
+
+    function renderTab(name) {
+      container.querySelectorAll('.tab-btn').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.tab === name);
+      });
+
+      if (name === 'appointments') {
+        if (appointments.length === 0) {
+          tabContent.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada jadwal</p></div>';
+          return;
+        }
+        tabContent.innerHTML = `
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Tanggal &amp; Jam</th><th>Terapis</th><th>Mode</th><th>Status</th><th>Catatan</th></tr></thead>
+              <tbody>
+                ${appointments.map((a) => `
+                  <tr>
+                    <td class="font-mono"><strong>${esc(formatDateId(a.scheduled_date))}</strong> ${esc(a.start_time)} WIB</td>
+                    <td>${esc(a.therapist_name || '-')}</td>
+                    <td>${statusBadge('mode', a.session_mode)}</td>
+                    <td>${statusBadge('appointment', a.status)}</td>
+                    <td class="text-xs">${esc(a.cancel_reason ? `Alasan batal: ${a.cancel_reason}` : (a.notes || '-'))}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } else if (name === 'assessments' && hasAssessments) {
+        const list = detail.assessments;
+        if (list.length === 0) {
+          tabContent.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada assessment awal</p></div>';
+          return;
+        }
+        tabContent.innerHTML = list.map((a) => `
+          <div class="context-item">
+            <div class="flex-between">
+              <strong>${esc(formatDateId(a.assessment_date))}</strong>
+              <span class="text-xs text-muted">Terapis: ${esc(a.therapist_name || '-')}</span>
+            </div>
+            <div class="text-sm mt-2"><strong>Keluhan Utama:</strong> ${esc(a.main_complaint)}</div>
+            ${a.therapy_goals ? `<div class="text-xs text-muted mt-2"><strong>Tujuan Terapi:</strong> ${esc(a.therapy_goals)}</div>` : ''}
+            ${a.recommendation ? `<div class="text-xs text-muted mt-2"><strong>Rekomendasi:</strong> ${esc(a.recommendation)}</div>` : ''}
+          </div>
+        `).join('');
+      } else if (name === 'rme' && hasRme) {
+        const list = detail.rme_sessions;
+        if (list.length === 0) {
+          tabContent.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada catatan RME</p></div>';
+          return;
+        }
+        tabContent.innerHTML = list.map((r) => `
+          <div class="context-item">
+            <div class="flex-between">
+              <div>
+                <span class="badge badge-primary">Sesi #${esc(r.session_no)}</span>
+                <strong style="margin-left:6px;">${esc(formatDateId(r.session_date))}</strong>
+                ${statusBadge('mode', r.session_mode)}
+              </div>
+              <span class="text-xs text-muted">Terapis: ${esc(r.therapist_name || '-')} ${r.progress_score ? `• Kemajuan ${esc(r.progress_score)}/10` : ''}</span>
+            </div>
+            <div class="text-sm mt-2"><strong>Keluhan:</strong> ${esc(r.chief_complaint)}</div>
+            ${r.intervention ? `<div class="text-xs text-muted mt-2"><strong>Intervensi:</strong> ${esc(r.intervention)}</div>` : ''}
+            ${r.homework ? `<div class="text-xs text-muted mt-2"><strong>PR / Tugas Rumah:</strong> ${esc(r.homework)}</div>` : ''}
+            ${r.next_focus ? `<div class="text-xs text-muted mt-2"><strong>Fokus Berikutnya:</strong> ${esc(r.next_focus)}</div>` : ''}
+          </div>
+        `).join('');
+      }
+    }
+
+    container.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => renderTab(btn.dataset.tab));
+    });
+    renderTab('appointments');
+
+    container.querySelector('#btn-back-clients')?.addEventListener('click', () => navigate('#/clients'));
+    container.querySelector('#btn-edit-detail-cln')?.addEventListener('click', () => {
+      openClientFormModal(c, actor, () => renderClientDetailView(container, clientId));
+    });
+    container.querySelector('#btn-quick-apt')?.addEventListener('click', () => navigate(`#/appointments?client_id=${clientId}&new=1`));
+    container.querySelector('#btn-quick-asm')?.addEventListener('click', () => navigate(`#/assessments?client_id=${clientId}`));
+    container.querySelector('#btn-quick-rme')?.addEventListener('click', () => navigate(`#/rme?client_id=${clientId}`));
+  } catch (err) {
+    container.innerHTML = `
+      <div class="card empty-state">
+        <p class="empty-state-title">Tidak dapat memuat Detail Klien</p>
+        <p class="empty-state-desc">${esc(err.message)}</p>
+        <button type="button" class="btn btn-primary" onclick="window.location.hash='#/clients'">Kembali ke Data Klien</button>
+      </div>
+    `;
+    toast(err.message, 'danger');
+  }
+}

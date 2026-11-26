@@ -3,7 +3,7 @@
  * binding shell responsif, routing SPA, dan modal ganti password mandiri.
  */
 
-import { registerApiAuthHooks, apiHealth, apiCall } from './api.js';
+import { registerApiAuthHooks, registerApiProgressHooks, apiHealth, apiCall } from './api.js';
 import {
   getToken,
   getUser,
@@ -20,7 +20,9 @@ import {
   roleLabel
 } from './auth.js';
 import { getAllowedNavItems, parseHashRoute, navigate, getRouteGuardResult } from './router.js';
-import { esc, toast, openModal, closeModal, clearFieldErrors, showFieldErrors } from './ui.js';
+import { esc, toast, openModal, closeModal, clearFieldErrors, showFieldErrors, topProgress, setButtonLoading } from './ui.js';
+import { animatePageEnter } from './motion.js';
+import { storeClearAll } from './store.js';
 import { renderLoginView, renderMustChangePasswordView } from './pages/login.js';
 import { renderDashboardPage } from './pages/dashboard.js';
 
@@ -208,10 +210,9 @@ function openChangePasswordModal() {
       showFieldErrors(form, { confirm_password: 'Konfirmasi password tidak cocok.' });
       return;
     }
-    btn.disabled = true;
-    btn.textContent = 'Menyimpan...';
+    setButtonLoading(btn, true, 'Menyimpan...');
     try {
-      const res = await apiCall('auth.changePassword', { current_password: cur, new_password: next });
+      const res = await apiCall('auth.changePassword', { current_password: cur, new_password: next }, { write: true });
       setSession(res.data.token, res.data.user, res.data.permissions);
       closeModal();
       toast('Password berhasil diperbarui. Sesi di perangkat lain dicabut.', 'success');
@@ -219,8 +220,7 @@ function openChangePasswordModal() {
       if (err.fields) showFieldErrors(form, err.fields);
       toast(err.message, 'danger');
     } finally {
-      btn.disabled = false;
-      btn.textContent = 'Simpan Password';
+      setButtonLoading(btn, false);
     }
   });
 }
@@ -229,12 +229,13 @@ function openChangePasswordModal() {
 // Route Execution
 // ============================================================================
 
-async function renderCurrentRoute() {
+async function renderCurrentRoute(forceRefresh = false) {
   const authRoot = document.getElementById('auth-root');
   const appShell = document.getElementById('app-shell');
   const mainContent = document.getElementById('main-content');
 
   const route = parseHashRoute();
+  route.forceRefresh = Boolean(forceRefresh);
   const guard = getRouteGuardResult(route);
 
   if (guard.mustChangePassword) {
@@ -303,6 +304,7 @@ async function renderCurrentRoute() {
   document.getElementById('page-subtitle').textContent = def.subtitle;
 
   const renderFn = await def.load();
+  animatePageEnter(mainContent);
   await renderFn(mainContent, route);
 }
 
@@ -354,6 +356,11 @@ function initPwaSupport() {
 // ============================================================================
 
 async function bootstrap() {
+  registerApiProgressHooks({
+    onStart: () => topProgress.start(),
+    onDone: () => topProgress.done()
+  });
+
   registerApiAuthHooks({
     getToken,
     onUnauthenticated: (err) => {
@@ -366,6 +373,7 @@ async function bootstrap() {
   });
 
   setSessionClearedHandler((reason) => {
+    storeClearAll();
     if (reason === 'IDLE_TIMEOUT') {
       toast('Sesi berakhir otomatis karena tidak ada aktivitas.', 'warning');
     } else if (reason === 'LOGOUT') {
@@ -383,7 +391,7 @@ async function bootstrap() {
   document.getElementById('drawer-backdrop')?.addEventListener('click', () => toggleDrawer(false));
   document.getElementById('btn-logout')?.addEventListener('click', () => performLogout());
   document.getElementById('btn-change-password')?.addEventListener('click', () => openChangePasswordModal());
-  document.getElementById('btn-refresh-page')?.addEventListener('click', () => renderCurrentRoute());
+  document.getElementById('btn-refresh-page')?.addEventListener('click', () => renderCurrentRoute(true));
   document.getElementById('btn-topbar-cta')?.addEventListener('click', () => navigate('#/clients?new=1'));
   document.getElementById('topbar-search-form')?.addEventListener('submit', (e) => {
     e.preventDefault();

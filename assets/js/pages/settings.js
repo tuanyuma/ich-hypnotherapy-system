@@ -1,20 +1,28 @@
 /**
  * pages/settings.js — Pengaturan Klinik Non-Rahasia (sheet SETTINGS):
- * Read-only untuk ADMIN; dapat diubah oleh OWNER.
+ * - SWR in-memory cache + background refresh via Top Progress Bar
+ * - Inline button spinner saat menyimpan pengaturan.
  */
 
 import { apiCall } from '../api.js';
 import { can, setPublicSettings } from '../auth.js';
-import { esc, renderSkeletonTable, clearFieldErrors, showFieldErrors, toast } from '../ui.js';
+import {
+  esc,
+  renderSkeletonTable,
+  clearFieldErrors,
+  showFieldErrors,
+  setButtonLoading,
+  toast
+} from '../ui.js';
+import { storeGet, storeSet, storeIsFresh } from '../store.js';
 
-export async function renderSettingsPage(container) {
+export async function renderSettingsPage(container, route) {
   const canEdit = can('settings:edit');
-  container.innerHTML = renderSkeletonTable(5);
+  const cacheKey = 'settings:get';
+  const forceRefresh = Boolean(route && route.forceRefresh);
+  const cached = storeGet(cacheKey);
 
-  try {
-    const res = await apiCall('settings.get', {});
-    const s = (res.data && res.data.settings) || {};
-
+  function paintSettings(s) {
     container.innerHTML = `
       <section class="card">
         <div class="card-header">
@@ -77,8 +85,7 @@ export async function renderSettingsPage(container) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFieldErrors(form);
-        saveBtn.disabled = true;
-        saveBtn.textContent = 'Menyimpan...';
+        setButtonLoading(saveBtn, true, 'Menyimpan...');
 
         const settingsPayload = {
           clinic_name: form.clinic_name.value.trim(),
@@ -92,6 +99,7 @@ export async function renderSettingsPage(container) {
         try {
           const updated = await apiCall('settings.update', { settings: settingsPayload }, { write: true });
           const next = updated.data.settings || {};
+          storeSet(cacheKey, next);
           setPublicSettings({
             clinic_name: next.clinic_name,
             clinic_phone: next.clinic_phone,
@@ -105,13 +113,30 @@ export async function renderSettingsPage(container) {
           if (err.fields) showFieldErrors(form, err.fields);
           toast(err.message, 'danger');
         } finally {
-          saveBtn.disabled = false;
-          saveBtn.textContent = 'Simpan Pengaturan';
+          setButtonLoading(saveBtn, false);
         }
       });
     }
+  }
+
+  if (cached && cached.data && !forceRefresh) {
+    paintSettings(cached.data);
+    if (storeIsFresh(cacheKey, 60000)) return;
+  } else {
+    container.innerHTML = renderSkeletonTable(5);
+  }
+
+  try {
+    const res = await apiCall('settings.get', {});
+    const s = (res.data && res.data.settings) || {};
+    const { changed } = storeSet(cacheKey, s);
+    if (!cached || forceRefresh || changed) {
+      paintSettings(s);
+    }
   } catch (err) {
-    container.innerHTML = `<div class="card empty-state"><p class="empty-state-title">Gagal memuat pengaturan</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+    if (!cached) {
+      container.innerHTML = `<div class="card empty-state"><p class="empty-state-title">Gagal memuat pengaturan</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+    }
     toast(err.message, 'danger');
   }
 }

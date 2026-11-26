@@ -4,6 +4,8 @@
  */
 
 import { apiCall } from './api.js';
+import { storeClearAll } from './store.js';
+import { authLoader } from './ui.js';
 
 const STORAGE_KEY = 'ich_hypno_session_v1';
 
@@ -80,6 +82,7 @@ export function clearSession(reason) {
   state.user = null;
   state.permissions = [];
   persistSession();
+  storeClearAll();
   stopIdleTimer();
   onSessionClearedCb(reason || '');
 }
@@ -132,13 +135,15 @@ export async function verifySessionWithServer() {
 
 export async function performLogout() {
   const hasToken = Boolean(state.token);
+  authLoader.show('Mengakhiri sesi dengan aman...');
   try {
     if (hasToken) {
-      await apiCall('auth.logout', {});
+      await apiCall('auth.logout', {}, { hideTopLoader: true });
     }
   } catch (_) {
     // Tetap bersihkan sesi lokal walau jaringan gagal
   } finally {
+    authLoader.hide();
     clearSession('LOGOUT');
   }
 }

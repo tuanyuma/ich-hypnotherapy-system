@@ -1,7 +1,8 @@
 /**
  * pages/therapists.js — Master Data Terapis (F4):
- * CRUD profil, area, spesialisasi, tarif sesi, komisi (khusus Owner/Admin),
- * mode layanan Online/Offline/Keduanya, status, detail profil, search, filter, pagination.
+ * - SWR in-memory cache + Top Progress Bar background refresh
+ * - Inline spinner di tombol Detail & modal simpan
+ * - Optimistic Delete dengan animasi keluar halus + rollback otomatis bila gagal.
  */
 
 import { apiCall } from '../api.js';
@@ -17,12 +18,27 @@ import {
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
+  markRowDeleting,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  storeUpdateListItems
+} from '../store.js';
+import { animateRowRemove } from '../motion.js';
 
-export async function renderTherapistsPage(container) {
+export async function renderTherapistsPage(container, route) {
   const showCommission = can('therapists:view_commission');
   const state = { page: 1, limit: 20, q: '', status: '', service_mode: '' };
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    return `therapists:list:p${state.page}:q=${state.q}:s=${state.status}:m=${state.service_mode}`;
+  }
 
   container.innerHTML = `
     <section class="card">
@@ -61,8 +77,22 @@ export async function renderTherapistsPage(container) {
   const statusEl = container.querySelector('#trp-filter-status');
   const modeEl = container.querySelector('#trp-filter-mode');
 
-  async function loadTherapists() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  async function loadTherapists({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        state.page = p;
+        loadTherapists();
+      });
+      if (storeIsFresh(key, 35000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('therapists.list', {
         page: state.page,
@@ -73,14 +103,21 @@ export async function renderTherapistsPage(container) {
           service_mode: state.service_mode || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        state.page = p;
-        loadTherapists();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          state.page = p;
+          loadTherapists();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat data terapis</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat data terapis</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -119,7 +156,7 @@ export async function renderTherapistsPage(container) {
           </thead>
           <tbody>
             ${items.map((t) => `
-              <tr>
+              <tr data-row-id="${esc(t.therapist_id)}">
                 <td>
                   <div><button type="button" class="link-btn" data-view-trp="${esc(t.therapist_id)}">${esc(t.full_name)}</button></div>
                   <div class="text-xs text-muted font-mono">${esc(t.code)} ${t.phone ? `• ${esc(t.phone)}` : ''}</div>
@@ -148,17 +185,19 @@ export async function renderTherapistsPage(container) {
 
     const byId = Object.fromEntries(items.map((t) => [t.therapist_id, t]));
     listWrap.querySelectorAll('[data-view-trp]').forEach((btn) => {
-      btn.addEventListener('click', () => openTherapistDetailModal(btn.dataset.viewTrp));
+      btn.addEventListener('click', () => openTherapistDetailModal(btn.dataset.viewTrp, btn));
     });
     listWrap.querySelectorAll('[data-edit-trp]').forEach((btn) => {
       btn.addEventListener('click', () => openTherapistFormModal(byId[btn.dataset.editTrp]));
     });
     listWrap.querySelectorAll('[data-del-trp]').forEach((btn) => {
-      btn.addEventListener('click', () => handleDeleteTherapist(byId[btn.dataset.delTrp]));
+      btn.addEventListener('click', () => handleDeleteTherapist(byId[btn.dataset.delTrp], btn));
     });
   }
 
-  async function openTherapistDetailModal(therapistId) {
+  async function openTherapistDetailModal(therapistId, triggerBtn = null) {
+    const isActionBtn = triggerBtn && triggerBtn.classList.contains('btn');
+    if (isActionBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
     try {
       const res = await apiCall('therapists.get', { therapist_id: therapistId });
       const t = res.data.therapist;
@@ -189,6 +228,8 @@ export async function renderTherapistsPage(container) {
       });
     } catch (err) {
       toast(err.message, 'danger');
+    } finally {
+      if (isActionBtn) setButtonLoading(triggerBtn, false);
     }
   }
 
@@ -281,8 +322,7 @@ export async function renderTherapistsPage(container) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearFieldErrors(form);
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Menyimpan...';
+      setButtonLoading(saveBtn, true, 'Menyimpan...');
 
       const payload = {
         code: form.code.value.trim(),
@@ -310,18 +350,20 @@ export async function renderTherapistsPage(container) {
           toast('Terapis baru berhasil ditambahkan.', 'success');
         }
         closeModal();
-        loadTherapists();
+        storeInvalidate('therapists');
+        storeInvalidate('dashboard');
+        loadTherapists({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
       } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = isEdit ? 'Simpan Perubahan' : 'Tambah Terapis';
+        setButtonLoading(saveBtn, false);
       }
     });
   }
 
-  async function handleDeleteTherapist(t) {
+  async function handleDeleteTherapist(t, btn) {
+    if (!t) return;
     const ok = await confirmDialog({
       title: 'Hapus Data Terapis',
       message: `Hapus (soft delete) terapis "${t.full_name}" (${t.code})? Riwayat klien dan sesi tetap tersimpan.`,
@@ -330,15 +372,32 @@ export async function renderTherapistsPage(container) {
     });
     if (!ok) return;
 
+    const rowEl = btn.closest('tr');
+    setButtonLoading(btn, true, 'Menghapus...');
+    markRowDeleting(rowEl, true);
+
+    const deleteReq = apiCall('therapists.delete', {
+      therapist_id: t.therapist_id,
+      expected_version: t.version
+    }, { write: true });
+
+    await animateRowRemove(rowEl);
+    if (rowEl && rowEl.parentElement) rowEl.remove();
+
+    storeUpdateListItems('therapists', (arr) => arr.filter((item) => item.therapist_id !== t.therapist_id));
+    const tbody = listWrap.querySelector('tbody');
+    if (tbody && tbody.children.length === 0) renderTable([]);
+
     try {
-      await apiCall('therapists.delete', {
-        therapist_id: t.therapist_id,
-        expected_version: t.version
-      }, { write: true });
-      toast('Data terapis dihapus.', 'success');
-      loadTherapists();
+      await deleteReq;
+      storeInvalidate('therapists');
+      storeInvalidate('dashboard');
+      toast(`Data terapis "${t.full_name}" berhasil dihapus.`, 'success');
+      loadTherapists({ force: true, silent: true });
     } catch (err) {
+      storeInvalidate('therapists');
       toast(err.message, 'danger');
+      loadTherapists({ force: true, silent: true });
     }
   }
 
@@ -352,5 +411,5 @@ export async function renderTherapistsPage(container) {
   statusEl.addEventListener('change', () => { state.status = statusEl.value; state.page = 1; loadTherapists(); });
   modeEl.addEventListener('change', () => { state.service_mode = modeEl.value; state.page = 1; loadTherapists(); });
 
-  loadTherapists();
+  await loadTherapists({ force: Boolean(route && route.forceRefresh) });
 }

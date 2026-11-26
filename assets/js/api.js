@@ -1,7 +1,7 @@
 /**
- * api.js — Klien HTTP CORS-safe ke Google Apps Script Web App.
- * Seluruh aksi terproteksi dikirim via POST (Content-Type: text/plain;charset=utf-8)
- * dengan token di JSON body (tidak pernah di URL query string).
+ * api.js — Klien HTTP CORS-safe ke Google Apps Script Web App
+ * dengan hook Top Progress Bar otomatis, auto-retry aman untuk operasi baca,
+ * pemisahan timeout baca/tulis, dan telemetri latensi ringan.
  */
 
 import { APP_FRONTEND_CONFIG, isGasUrlConfigured } from './config.js';
@@ -12,8 +12,17 @@ let authHooks = {
   onMustChangePassword: () => {}
 };
 
+let progressHooks = {
+  onStart: () => {},
+  onDone: () => {}
+};
+
 export function registerApiAuthHooks(hooks) {
   authHooks = Object.assign({}, authHooks, hooks || {});
+}
+
+export function registerApiProgressHooks(hooks) {
+  progressHooks = Object.assign({}, progressHooks, hooks || {});
 }
 
 export function generateRequestId() {
@@ -49,10 +58,40 @@ export async function apiHealth() {
       method: 'GET',
       signal: controller.signal
     });
-    const json = await res.json();
+    return await res.json();
+  } catch (_) {
+    return { ok: false, error: { code: 'NETWORK', message: 'Tidak dapat terhubung ke server klinik.' } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function performSingleFetch(body, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(APP_FRONTEND_CONFIG.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+      redirect: 'follow',
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch (_) {
+      throw new ApiError('BAD_RESPONSE', 'Respons server tidak valid. Pastikan Web App GAS sudah di-deploy dengan akses Anyone.');
+    }
     return json;
   } catch (err) {
-    return { ok: false, error: { code: 'NETWORK', message: 'Tidak dapat terhubung ke server klinik.' } };
+    if (err instanceof ApiError) throw err;
+    if (err && err.name === 'AbortError') {
+      throw new ApiError('TIMEOUT', 'Permintaan melebihi batas waktu. Coba lagi sebentar.');
+    }
+    throw new ApiError('NETWORK', 'Gagal terhubung ke server. Periksa koneksi internet Anda.');
   } finally {
     clearTimeout(timer);
   }
@@ -70,10 +109,12 @@ export async function apiCall(action, payload = {}, options = {}) {
     throw new ApiError('OFFLINE', 'Koneksi internet terputus. Periksa jaringan Anda.');
   }
 
-  const controller = new AbortController();
-  const timeoutMs = options.timeoutMs || APP_FRONTEND_CONFIG.REQUEST_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const useTopLoader = options.hideTopLoader !== true;
+  if (useTopLoader) {
+    progressHooks.onStart(action);
+  }
 
+  const timeoutMs = options.timeoutMs || (options.write ? 45000 : APP_FRONTEND_CONFIG.REQUEST_TIMEOUT_MS);
   const body = {
     action,
     token: options.skipAuth ? '' : authHooks.getToken(),
@@ -81,22 +122,27 @@ export async function apiCall(action, payload = {}, options = {}) {
     payload: payload || {}
   };
 
-  try {
-    const response = await fetch(APP_FRONTEND_CONFIG.GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body),
-      redirect: 'follow',
-      signal: controller.signal
-    });
+  const tStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const maxAttempts = options.write ? 1 : 2; // Auto-retry 1x aman hanya untuk operasi baca
 
-    const text = await response.text();
+  try {
     let json = null;
-    try {
-      json = JSON.parse(text);
-    } catch (_) {
-      throw new ApiError('BAD_RESPONSE', 'Respons server tidak valid. Pastikan Web App GAS sudah di-deploy dengan akses Anyone.');
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        json = await performSingleFetch(body, timeoutMs);
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const retryable = !options.write && (err.code === 'NETWORK' || err.code === 'TIMEOUT');
+        if (!retryable || attempt === maxAttempts) {
+          throw err;
+        }
+        await new Promise((r) => setTimeout(r, 450));
+      }
     }
+    if (lastErr) throw lastErr;
 
     if (!json || json.ok !== true) {
       const errObj = (json && json.error) || {};
@@ -110,14 +156,25 @@ export async function apiCall(action, payload = {}, options = {}) {
       throw apiErr;
     }
 
-    return json;
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    if (err && err.name === 'AbortError') {
-      throw new ApiError('TIMEOUT', 'Permintaan melebihi batas waktu. Coba lagi sebentar.');
+    // Rekam telemetri latensi untuk audit performa
+    if (typeof window !== 'undefined') {
+      const totalMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tStart);
+      const serverMs = Number((json.meta && json.meta.server_ms) || 0);
+      window.__ICH_PERF__ = window.__ICH_PERF__ || [];
+      window.__ICH_PERF__.push({
+        action,
+        total_ms: totalMs,
+        server_ms: serverMs,
+        net_ms: Math.max(0, totalMs - serverMs),
+        at: Date.now()
+      });
+      if (window.__ICH_PERF__.length > 30) window.__ICH_PERF__.shift();
     }
-    throw new ApiError('NETWORK', 'Gagal terhubung ke server. Periksa koneksi internet Anda.');
+
+    return json;
   } finally {
-    clearTimeout(timer);
+    if (useTopLoader) {
+      progressHooks.onDone(action);
+    }
   }
 }

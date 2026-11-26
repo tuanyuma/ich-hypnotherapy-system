@@ -1,9 +1,9 @@
 /**
  * pages/rme.js — Rekam Medis Elektronik / Sesi Terapi (F8):
- * - Form pencatatan sesi lengkap dengan textarea lega & auto-resize
- * - Panel Context Reference otomatis saat klien dipilih (Assessment + 3 sesi terakhir + jadwal aktif + preview no. sesi)
- * - Penomoran sesi otomatis tanpa batas dari server
- * - Tabel Riwayat RME di bawah form (Lihat, Edit, Hapus), search, filter, dan pagination.
+ * - SWR in-memory cache + non-blocking therapist options
+ * - Panel Context Reference otomatis saat klien dipilih
+ * - Inline button spinner saat simpan/perbarui RME
+ * - Optimistic Delete dengan animasi keluar halus + rollback otomatis bila gagal.
  */
 
 import { apiCall } from '../api.js';
@@ -22,8 +22,19 @@ import {
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
+  markRowDeleting,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  storeUpdateListItems,
+  getTherapistsOptionsCached
+} from '../store.js';
+import { animateRowRemove } from '../motion.js';
 
 export async function renderRmePage(container, route) {
   const actor = getUser();
@@ -32,15 +43,9 @@ export async function renderRmePage(container, route) {
   const canEdit = can('rme:edit');
   const canDelete = can('rme:delete');
 
-  let therapistOptions = [];
-  if (!isTherapist) {
-    try {
-      const optRes = await apiCall('therapists.options', { active_only: false });
-      therapistOptions = (optRes.data && optRes.data.items) || [];
-    } catch (_) {
-      therapistOptions = [];
-    }
-  }
+  let therapistOptions = !isTherapist
+    ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
+    : [];
 
   const prefillClientId = route && route.query ? route.query.client_id : '';
   const prefillAptId = route && route.query ? route.query.appointment_id : '';
@@ -56,6 +61,11 @@ export async function renderRmePage(container, route) {
 
   const listState = { page: 1, limit: 15, q: '', therapist_id: '', session_mode: '', date_from: '', date_to: '' };
   let editingRecord = null;
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    return `rme:list:p${listState.page}:q=${listState.q}:t=${listState.therapist_id}:m=${listState.session_mode}:f=${listState.date_from}:to=${listState.date_to}`;
+  }
 
   container.innerHTML = `
     ${canAdd || canEdit ? `
@@ -225,6 +235,29 @@ export async function renderRmePage(container, route) {
   const listWrap = container.querySelector('#rme-list-wrap');
   const pagWrap = container.querySelector('#rme-pagination');
 
+  // Isi opsi terapis di latar belakang jika belum ada di RAM
+  if (!isTherapist && therapistOptions.length === 0) {
+    getTherapistsOptionsCached({ activeOnly: false })
+      .then((opts) => {
+        therapistOptions = opts;
+        const formSelect = container.querySelector('#rme-trp');
+        if (formSelect) {
+          const prev = formSelect.value || (initialClient ? initialClient.primary_therapist_id : '');
+          formSelect.innerHTML = '<option value="">-- Pilih Terapis --</option>' +
+            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('');
+          if (prev) formSelect.value = prev;
+        }
+        const filterSelect = container.querySelector('#rme-filter-trp');
+        if (filterSelect) {
+          const prevF = filterSelect.value;
+          filterSelect.innerHTML = '<option value="">Semua Terapis</option>' +
+            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)}</option>`).join('');
+          filterSelect.value = prevF;
+        }
+      })
+      .catch(() => {});
+  }
+
   let clientAc = null;
 
   async function loadContextReference(clientId, selectedAptId = '') {
@@ -334,6 +367,7 @@ export async function renderRmePage(container, route) {
     if (aptWrap) aptWrap.hidden = false;
     formTitle.textContent = 'Catat Sesi Terapi (RME)';
     submitBtn.textContent = 'Simpan Sesi RME';
+    delete submitBtn.dataset.origHtml;
     cancelEditBtn.hidden = true;
     loadContextReference('');
   }
@@ -367,6 +401,7 @@ export async function renderRmePage(container, route) {
       nextBadge.hidden = false;
     }
     submitBtn.textContent = 'Perbarui RME';
+    delete submitBtn.dataset.origHtml;
     cancelEditBtn.hidden = false;
     loadContextReference(rec.client_id);
     container.querySelector('#rme-form-card')?.scrollIntoView({ behavior: 'smooth' });
@@ -385,8 +420,7 @@ export async function renderRmePage(container, route) {
         return;
       }
 
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Menyimpan...';
+      setButtonLoading(submitBtn, true, 'Menyimpan...');
 
       const payload = {
         client_id: clientId,
@@ -418,20 +452,37 @@ export async function renderRmePage(container, route) {
           const res = await apiCall('rme.create', payload, { write: true });
           toast(`RME Sesi #${res.data.rme.session_no} berhasil disimpan.`, 'success');
         }
+        storeInvalidate('rme');
+        storeInvalidate('clients');
+        storeInvalidate('appointments');
+        storeInvalidate('dashboard');
+        setButtonLoading(submitBtn, false);
         resetFormToCreate();
-        loadRmeList();
+        loadRmeList({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = editingRecord ? 'Perbarui RME' : 'Simpan Sesi RME';
+        setButtonLoading(submitBtn, false);
       }
     });
   }
 
-  async function loadRmeList() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  async function loadRmeList({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        listState.page = p;
+        loadRmeList();
+      });
+      if (storeIsFresh(key, 30000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('rme.list', {
         page: listState.page,
@@ -444,14 +495,21 @@ export async function renderRmePage(container, route) {
           date_to: listState.date_to || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        listState.page = p;
-        loadRmeList();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          listState.page = p;
+          loadRmeList();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat riwayat RME</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat riwayat RME</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -499,7 +557,7 @@ export async function renderRmePage(container, route) {
           </thead>
           <tbody>
             ${items.map((r) => `
-              <tr>
+              <tr data-row-id="${esc(r.rme_id)}">
                 <td class="font-mono text-sm">
                   <span class="badge badge-primary">Sesi #${esc(r.session_no)}</span>
                   <div class="text-xs text-muted mt-2">${esc(formatDateId(r.session_date))}</div>
@@ -535,6 +593,7 @@ export async function renderRmePage(container, route) {
     listWrap.querySelectorAll('[data-del-rme]').forEach((b) => {
       b.addEventListener('click', async () => {
         const rec = byId[b.dataset.delRme];
+        if (!rec) return;
         const ok = await confirmDialog({
           title: 'Hapus Catatan RME',
           message: `Hapus (soft delete) RME Sesi #${rec.session_no} milik "${rec.client_name}"? Kolom Terakhir Sesi klien akan dihitung ulang otomatis.`,
@@ -542,13 +601,35 @@ export async function renderRmePage(container, route) {
           danger: true
         });
         if (!ok) return;
+
+        const rowEl = b.closest('tr');
+        setButtonLoading(b, true, 'Menghapus...');
+        markRowDeleting(rowEl, true);
+
+        const deleteReq = apiCall('rme.delete', {
+          rme_id: rec.rme_id,
+          expected_version: rec.version
+        }, { write: true });
+
+        await animateRowRemove(rowEl);
+        if (rowEl && rowEl.parentElement) rowEl.remove();
+
+        storeUpdateListItems('rme', (arr) => arr.filter((item) => item.rme_id !== rec.rme_id));
+        const tbody = listWrap.querySelector('tbody');
+        if (tbody && tbody.children.length === 0) renderTable([]);
+
         try {
-          await apiCall('rme.delete', { rme_id: rec.rme_id, expected_version: rec.version }, { write: true });
-          toast('Catatan RME dihapus.', 'success');
+          await deleteReq;
+          storeInvalidate('rme');
+          storeInvalidate('clients');
+          storeInvalidate('dashboard');
+          toast(`Catatan RME Sesi #${rec.session_no} berhasil dihapus.`, 'success');
           if (editingRecord && editingRecord.rme_id === rec.rme_id) resetFormToCreate();
-          loadRmeList();
+          loadRmeList({ force: true, silent: true });
         } catch (err) {
+          storeInvalidate('rme');
           toast(err.message, 'danger');
+          loadRmeList({ force: true, silent: true });
         }
       });
     });
@@ -564,5 +645,5 @@ export async function renderRmePage(container, route) {
   container.querySelector('#rme-filter-from').addEventListener('change', (e) => { listState.date_from = e.target.value; listState.page = 1; loadRmeList(); });
   container.querySelector('#rme-filter-to').addEventListener('change', (e) => { listState.date_to = e.target.value; listState.page = 1; loadRmeList(); });
 
-  loadRmeList();
+  await loadRmeList({ force: Boolean(route && route.forceRefresh) });
 }

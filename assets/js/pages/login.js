@@ -6,7 +6,8 @@
 import { apiCall } from '../api.js';
 import { isGasUrlConfigured } from '../config.js';
 import { setSession, getPublicSettings, getUser, performLogout } from '../auth.js';
-import { esc, clearFieldErrors, showFieldErrors, toast } from '../ui.js';
+import { esc, clearFieldErrors, showFieldErrors, toast, authLoader, setButtonLoading } from '../ui.js';
+import { animatePageEnter } from '../motion.js';
 
 export function renderLoginView(container, { onLoginSuccess }) {
   const clinicName = getPublicSettings().clinic_name || 'ICH HYPNOTHERAPY';
@@ -87,10 +88,10 @@ export function renderLoginView(container, { onLoginSuccess }) {
       return;
     }
 
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Memverifikasi...';
+    setButtonLoading(submitBtn, true, 'Memverifikasi...');
+    authLoader.show('Memverifikasi akun Anda...');
     try {
-      const res = await apiCall('auth.login', { username, password }, { skipAuth: true });
+      const res = await apiCall('auth.login', { username, password }, { skipAuth: true, hideTopLoader: true });
       setSession(res.data.token, res.data.user, res.data.permissions);
       toast(`Selamat datang, ${res.data.user.full_name}`, 'success');
       onLoginSuccess(res.data.user);
@@ -101,11 +102,12 @@ export function renderLoginView(container, { onLoginSuccess }) {
       errBox.hidden = false;
       toast(msg, 'danger');
     } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Masuk ke Aplikasi';
+      authLoader.hide();
+      setButtonLoading(submitBtn, false);
     }
   });
 
+  animatePageEnter(container.querySelector('.auth-card'));
   form.username.focus();
 }
 
@@ -170,13 +172,12 @@ export function renderMustChangePasswordView(container, { onComplete }) {
       return;
     }
 
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Menyimpan...';
+    setButtonLoading(submitBtn, true, 'Menyimpan password...');
     try {
       const res = await apiCall('auth.changePassword', {
         current_password: currentPassword,
         new_password: newPassword
-      });
+      }, { write: true });
       setSession(res.data.token, res.data.user, res.data.permissions);
       toast('Password berhasil diperbarui.', 'success');
       onComplete();
@@ -187,8 +188,9 @@ export function renderMustChangePasswordView(container, { onComplete }) {
       errBox.hidden = false;
       toast(msg, 'danger');
     } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Simpan Password Baru & Masuk';
+      setButtonLoading(submitBtn, false);
     }
   });
+
+  animatePageEnter(container.querySelector('.auth-card'));
 }

@@ -1,7 +1,8 @@
 /**
  * pages/users.js — Manajemen Pengguna & Staf (F3):
- * CRUD akun, status soft-delete (ACTIVE/INACTIVE/SUSPENDED),
- * reset password dengan sandi sementara tampil sekali, dan tautan 1:1 THERAPIST_ID.
+ * - SWR in-memory cache + background refresh via Top Progress Bar
+ * - Inline spinner di tombol +Tambah/Edit (saat muat opsi terapis unlinked),
+ *   tombol simpan modal, Reset Sandi, dan Aktifkan/Nonaktifkan.
  */
 
 import { apiCall } from '../api.js';
@@ -17,12 +18,25 @@ import {
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  getTherapistsOptionsCached
+} from '../store.js';
 
-export async function renderUsersPage(container) {
+export async function renderUsersPage(container, route) {
   const actor = getUser();
   const state = { page: 1, limit: 20, q: '', role: '', status: '' };
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    return `users:list:p${state.page}:q=${state.q}:r=${state.role}:s=${state.status}`;
+  }
 
   container.innerHTML = `
     <section class="card">
@@ -69,8 +83,22 @@ export async function renderUsersPage(container) {
     return false;
   }
 
-  async function loadUsers() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  async function loadUsers({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        state.page = p;
+        loadUsers();
+      });
+      if (storeIsFresh(key, 35000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('users.list', {
         page: state.page,
@@ -81,14 +109,21 @@ export async function renderUsersPage(container) {
           status: state.status || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        state.page = p;
-        loadUsers();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          state.page = p;
+          loadUsers();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat pengguna</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat pengguna</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -122,7 +157,7 @@ export async function renderUsersPage(container) {
               const manageable = canManageRow(u);
               const isSelf = actor && actor.user_id === u.user_id;
               return `
-                <tr>
+                <tr data-row-id="${esc(u.user_id)}">
                   <td>
                     <div><strong>${esc(u.full_name)}</strong> ${isSelf ? '<span class="badge badge-primary">Anda</span>' : ''}</div>
                     <div class="text-xs text-muted font-mono">@${esc(u.username)}</div>
@@ -158,13 +193,13 @@ export async function renderUsersPage(container) {
     const byId = Object.fromEntries(items.map((u) => [u.user_id, u]));
 
     listWrap.querySelectorAll('[data-edit-user]').forEach((btn) => {
-      btn.addEventListener('click', () => openUserFormModal(byId[btn.dataset.editUser]));
+      btn.addEventListener('click', () => openUserFormModal(byId[btn.dataset.editUser], btn));
     });
     listWrap.querySelectorAll('[data-reset-pw]').forEach((btn) => {
-      btn.addEventListener('click', () => handleResetPassword(byId[btn.dataset.resetPw]));
+      btn.addEventListener('click', () => handleResetPassword(byId[btn.dataset.resetPw], btn));
     });
     listWrap.querySelectorAll('[data-status-user]').forEach((btn) => {
-      btn.addEventListener('click', () => handleSetStatus(byId[btn.dataset.statusUser], btn.dataset.nextStatus));
+      btn.addEventListener('click', () => handleSetStatus(byId[btn.dataset.statusUser], btn.dataset.nextStatus, btn));
     });
   }
 
@@ -198,18 +233,20 @@ export async function renderUsersPage(container) {
     });
   }
 
-  async function openUserFormModal(existing = null) {
+  async function openUserFormModal(existing = null, triggerBtn = null) {
     const isEdit = Boolean(existing);
     let therapistOptions = [];
+    if (triggerBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
     try {
-      const optRes = await apiCall('therapists.options', {
-        active_only: true,
-        unlinked_only: true,
-        exclude_user_id: existing ? existing.user_id : ''
+      therapistOptions = await getTherapistsOptionsCached({
+        activeOnly: true,
+        unlinkedOnly: true,
+        excludeUserId: existing ? existing.user_id : ''
       });
-      therapistOptions = (optRes.data && optRes.data.items) || [];
     } catch (_) {
       therapistOptions = [];
+    } finally {
+      if (triggerBtn) setButtonLoading(triggerBtn, false);
     }
 
     const canAssignOwner = actor && actor.role === 'OWNER';
@@ -281,8 +318,7 @@ export async function renderUsersPage(container) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearFieldErrors(form);
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Menyimpan...';
+      setButtonLoading(saveBtn, true, 'Menyimpan...');
 
       const payload = {
         username: form.username.value.trim(),
@@ -309,18 +345,18 @@ export async function renderUsersPage(container) {
             showTemporaryPasswordModal(res.data.user.username, res.data.temporary_password, 'Akun Baru Berhasil Dibuat');
           }
         }
-        loadUsers();
+        storeInvalidate('users');
+        loadUsers({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
       } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = isEdit ? 'Simpan Perubahan' : 'Buat Akun';
+        setButtonLoading(saveBtn, false);
       }
     });
   }
 
-  async function handleSetStatus(user, nextStatus) {
+  async function handleSetStatus(user, nextStatus, btn) {
     const label = nextStatus === 'ACTIVE' ? 'mengaktifkan kembali' : 'menonaktifkan';
     const ok = await confirmDialog({
       title: nextStatus === 'ACTIVE' ? 'Aktifkan Akun' : 'Nonaktifkan Akun',
@@ -330,20 +366,24 @@ export async function renderUsersPage(container) {
     });
     if (!ok) return;
 
+    setButtonLoading(btn, true, 'Memproses...');
     try {
       await apiCall('users.setStatus', {
         user_id: user.user_id,
         status: nextStatus,
         expected_version: user.version
       }, { write: true });
+      storeInvalidate('users');
       toast(`Status akun ${user.username} diperbarui menjadi ${nextStatus}.`, 'success');
-      loadUsers();
+      loadUsers({ force: true, silent: true });
     } catch (err) {
       toast(err.message, 'danger');
+    } finally {
+      setButtonLoading(btn, false);
     }
   }
 
-  async function handleResetPassword(user) {
+  async function handleResetPassword(user, btn) {
     const ok = await confirmDialog({
       title: 'Reset Password Pengguna',
       message: `Reset password akun "${user.full_name}" (@${user.username})? Semua sesi aktif pengguna ini akan langsung dicabut.`,
@@ -352,19 +392,24 @@ export async function renderUsersPage(container) {
     });
     if (!ok) return;
 
+    setButtonLoading(btn, true, 'Mereset...');
     try {
       const res = await apiCall('users.resetPassword', {
         user_id: user.user_id,
         expected_version: user.version
       }, { write: true });
+      storeInvalidate('users');
       showTemporaryPasswordModal(user.username, res.data.temporary_password, 'Password Berhasil Direset');
-      loadUsers();
+      loadUsers({ force: true, silent: true });
     } catch (err) {
       toast(err.message, 'danger');
+    } finally {
+      setButtonLoading(btn, false);
     }
   }
 
-  container.querySelector('#btn-add-user')?.addEventListener('click', () => openUserFormModal(null));
+  const addUserBtn = container.querySelector('#btn-add-user');
+  addUserBtn?.addEventListener('click', () => openUserFormModal(null, addUserBtn));
 
   let debounce = null;
   searchEl.addEventListener('input', () => {
@@ -378,5 +423,5 @@ export async function renderUsersPage(container) {
   roleEl.addEventListener('change', () => { state.role = roleEl.value; state.page = 1; loadUsers(); });
   statusEl.addEventListener('change', () => { state.status = statusEl.value; state.page = 1; loadUsers(); });
 
-  loadUsers();
+  await loadUsers({ force: Boolean(route && route.forceRefresh) });
 }

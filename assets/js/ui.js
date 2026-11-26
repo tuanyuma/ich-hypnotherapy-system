@@ -1,10 +1,11 @@
 /**
- * ui.js — Komponen UI reusable & XSS-safe: escape HTML, toast, modal,
- * dialog konfirmasi, pagination, skeleton loader, autocomplete klien,
- * badge status, dan formatter lokal Indonesia.
+ * ui.js — Komponen UI reusable & XSS-safe: Top Progress Bar global,
+ * Center Auth Loader (khusus Login/Logout), inline button spinner (gaya Bootstrap 5.3),
+ * toast, modal GSAP smooth, dialog konfirmasi, pagination, skeleton, dan autocomplete klien.
  */
 
 import { apiCall } from './api.js';
+import { animateModalOpen, animateModalClose } from './motion.js';
 
 export function esc(val) {
   return String(val === undefined || val === null ? '' : val)
@@ -93,6 +94,111 @@ export function statusBadge(type, value) {
 }
 
 // ============================================================================
+// Top Progress Bar Global (di puncak aplikasi, di bawah address bar browser)
+// ============================================================================
+
+let topPendingCount = 0;
+let topProgressVal = 0;
+let topTrickleTimer = null;
+let topHideTimer = null;
+
+export const topProgress = {
+  start() {
+    topPendingCount++;
+    const bar = document.getElementById('top-progress-bar');
+    const fill = document.getElementById('top-progress-fill');
+    if (!bar || !fill) return;
+
+    clearTimeout(topHideTimer);
+    if (topPendingCount === 1) {
+      topProgressVal = 14;
+      bar.classList.add('is-active');
+      bar.setAttribute('aria-hidden', 'false');
+      fill.style.width = topProgressVal + '%';
+
+      clearInterval(topTrickleTimer);
+      topTrickleTimer = setInterval(() => {
+        if (topProgressVal < 86) {
+          const step = topProgressVal < 45 ? 9 : topProgressVal < 70 ? 4 : 1.5;
+          topProgressVal = Math.min(86, topProgressVal + step);
+          fill.style.width = topProgressVal + '%';
+        }
+      }, 220);
+    }
+  },
+  done() {
+    topPendingCount = Math.max(0, topPendingCount - 1);
+    if (topPendingCount > 0) return;
+
+    clearInterval(topTrickleTimer);
+    topTrickleTimer = null;
+
+    const bar = document.getElementById('top-progress-bar');
+    const fill = document.getElementById('top-progress-fill');
+    if (!bar || !fill) return;
+
+    topProgressVal = 100;
+    fill.style.width = '100%';
+    clearTimeout(topHideTimer);
+    topHideTimer = setTimeout(() => {
+      bar.classList.remove('is-active');
+      bar.setAttribute('aria-hidden', 'true');
+      setTimeout(() => {
+        if (topPendingCount === 0) fill.style.width = '0%';
+      }, 220);
+    }, 180);
+  }
+};
+
+// ============================================================================
+// Center Full-Screen Loader (KHUSUS Login & Logout)
+// ============================================================================
+
+export const authLoader = {
+  show(message = 'Memproses autentikasi...') {
+    const el = document.getElementById('center-auth-loader');
+    const txt = document.getElementById('center-auth-loader-text');
+    if (!el) return;
+    if (txt) txt.textContent = message;
+    el.hidden = false;
+  },
+  hide() {
+    const el = document.getElementById('center-auth-loader');
+    if (!el) return;
+    el.hidden = true;
+  }
+};
+
+// ============================================================================
+// Inline Button Loading Spinner (untuk semua tombol & modal CRUD)
+// ============================================================================
+
+export function setButtonLoading(btn, isLoading, loadingLabel = 'Memproses...') {
+  if (!btn) return;
+  if (isLoading) {
+    if (!btn.dataset.origHtml) {
+      btn.dataset.origHtml = btn.innerHTML;
+    }
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    btn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span><span>${esc(loadingLabel)}</span>`;
+  } else {
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+    if (btn.dataset.origHtml) {
+      btn.innerHTML = btn.dataset.origHtml;
+      delete btn.dataset.origHtml;
+    }
+  }
+}
+
+export function markRowDeleting(rowEl, isDeleting) {
+  if (!rowEl) return;
+  rowEl.classList.toggle('is-deleting', Boolean(isDeleting));
+  rowEl.querySelectorAll('button').forEach((b) => { b.disabled = Boolean(isDeleting); });
+}
+
+// ============================================================================
 // Toast Notifications
 // ============================================================================
 
@@ -104,35 +210,49 @@ export function toast(message, type = 'info', durationMs = 3600) {
   item.textContent = String(message || '');
   root.appendChild(item);
   setTimeout(() => {
-    item.remove();
+    item.classList.add('is-leaving');
+    setTimeout(() => item.remove(), 220);
   }, durationMs);
 }
 
 // ============================================================================
-// Modal & Confirmation Dialog
+// Modal & Confirmation Dialog (Smooth GSAP Entrance/Exit)
 // ============================================================================
 
 let activeModalCleanup = null;
 let lastFocusedEl = null;
 
-export function closeModal() {
+export function closeModal(immediate = false) {
   const root = document.getElementById('modal-root');
-  if (!root) return;
+  if (!root || root.hidden) return;
   if (activeModalCleanup) {
     activeModalCleanup();
     activeModalCleanup = null;
   }
-  root.innerHTML = '';
-  root.hidden = true;
-  if (lastFocusedEl && typeof lastFocusedEl.focus === 'function') {
-    lastFocusedEl.focus();
-    lastFocusedEl = null;
+
+  const finalize = () => {
+    root.innerHTML = '';
+    root.hidden = true;
+    if (lastFocusedEl && typeof lastFocusedEl.focus === 'function') {
+      lastFocusedEl.focus();
+      lastFocusedEl = null;
+    }
+  };
+
+  if (immediate) {
+    finalize();
+  } else {
+    animateModalClose(root, finalize);
   }
 }
 
 export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', closable = true }) {
   const root = document.getElementById('modal-root');
   if (!root) return null;
+  if (activeModalCleanup) {
+    activeModalCleanup();
+    activeModalCleanup = null;
+  }
   lastFocusedEl = document.activeElement;
 
   const sizeClass = size === 'lg' ? 'modal-lg' : '';
@@ -147,6 +267,7 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', closa
     </div>
   `;
   root.hidden = false;
+  animateModalOpen(root);
 
   const onKeyDown = (e) => {
     if (e.key === 'Escape' && closable) {
@@ -215,7 +336,7 @@ export function confirmDialog({
       resolve(false);
     });
     btnOk.addEventListener('click', () => {
-      closeModal();
+      closeModal(true);
       resolve(true);
     });
   });
@@ -330,7 +451,7 @@ export function mountClientAutocomplete(container, { inputName = 'client_id', pl
 
   async function search(q) {
     menuEl.hidden = false;
-    menuEl.innerHTML = '<div class="autocomplete-item"><span class="autocomplete-item-sub">Mencari klien...</span></div>';
+    menuEl.innerHTML = '<div class="autocomplete-item"><span class="autocomplete-item-sub"><span class="btn-spinner btn-spinner-dark" style="margin-right:6px;"></span>Mencari klien...</span></div>';
     try {
       const res = await apiCall('clients.search', { q, limit: 15 });
       const items = (res.data && res.data.items) || [];

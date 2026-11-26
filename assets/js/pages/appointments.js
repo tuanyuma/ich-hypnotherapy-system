@@ -1,8 +1,8 @@
 /**
  * pages/appointments.js — Jadwal / Appointment (F7):
- * CRUD jadwal, deteksi bentrok waktu terapis, soft cancel dengan alasan,
- * jenis sesi Online/Offline, 5 status, tombol pengingat WhatsApp manual (wa.me),
- * search, filter, dan pagination.
+ * - SWR in-memory cache (match prefetch key appointments:list:p1:default)
+ * - Non-blocking therapist options via RAM cache
+ * - Inline button spinner di setiap modal tambah/edit & soft cancel.
  */
 
 import { apiCall } from '../api.js';
@@ -20,23 +20,36 @@ import {
   closeModal,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  getTherapistsOptionsCached
+} from '../store.js';
 
 export async function renderAppointmentsPage(container, route) {
   const actor = getUser();
   const isTherapist = actor && actor.role === 'THERAPIST';
-  let therapistOptions = [];
-  if (!isTherapist) {
-    try {
-      const optRes = await apiCall('therapists.options', { active_only: false });
-      therapistOptions = (optRes.data && optRes.data.items) || [];
-    } catch (_) {
-      therapistOptions = [];
-    }
-  }
+  let therapistOptions = !isTherapist
+    ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
+    : [];
 
   const state = { page: 1, limit: 20, q: '', therapist_id: '', status: '', session_mode: '', date_from: '', date_to: '' };
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    if (
+      state.page === 1 && !state.q && !state.therapist_id &&
+      !state.status && !state.session_mode && !state.date_from && !state.date_to
+    ) {
+      return 'appointments:list:p1:default';
+    }
+    return `appointments:list:p${state.page}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:m=${state.session_mode}:f=${state.date_from}:to=${state.date_to}`;
+  }
 
   container.innerHTML = `
     <section class="card">
@@ -81,8 +94,38 @@ export async function renderAppointmentsPage(container, route) {
   const listWrap = container.querySelector('#apt-list-wrap');
   const pagWrap = container.querySelector('#apt-pagination');
 
-  async function loadAppointments() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  // Segarkan opsi terapis di latar belakang jika belum ada di RAM
+  if (!isTherapist && therapistOptions.length === 0) {
+    getTherapistsOptionsCached({ activeOnly: false })
+      .then((opts) => {
+        therapistOptions = opts;
+        const filterSelect = container.querySelector('#apt-filter-trp');
+        if (filterSelect) {
+          const prevVal = filterSelect.value;
+          filterSelect.innerHTML = '<option value="">Semua Terapis</option>' +
+            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)}</option>`).join('');
+          filterSelect.value = prevVal;
+        }
+      })
+      .catch(() => {});
+  }
+
+  async function loadAppointments({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        state.page = p;
+        loadAppointments();
+      });
+      if (storeIsFresh(key, 30000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('appointments.list', {
         page: state.page,
@@ -96,14 +139,21 @@ export async function renderAppointmentsPage(container, route) {
           date_to: state.date_to || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        state.page = p;
-        loadAppointments();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          state.page = p;
+          loadAppointments();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat jadwal</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat jadwal</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -131,7 +181,7 @@ export async function renderAppointmentsPage(container, route) {
             ${items.map((a) => {
               const isOpen = a.status === 'SCHEDULED' || a.status === 'CONFIRMED';
               return `
-                <tr>
+                <tr data-row-id="${esc(a.appointment_id)}">
                   <td class="font-mono text-sm">
                     <div><strong>${esc(formatDateId(a.scheduled_date))}</strong></div>
                     <div class="text-xs text-muted">${esc(a.start_time)} WIB (${esc(a.duration_min)} mnt)</div>
@@ -175,20 +225,35 @@ export async function renderAppointmentsPage(container, route) {
     const byId = Object.fromEntries(items.map((a) => [a.appointment_id, a]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));
     listWrap.querySelectorAll('[data-to-rme]').forEach((b) => b.addEventListener('click', () => navigate(`#/rme?client_id=${b.dataset.cid}&appointment_id=${b.dataset.toRme}`)));
-    listWrap.querySelectorAll('[data-edit-apt]').forEach((b) => b.addEventListener('click', () => openAppointmentFormModal(byId[b.dataset.editApt], null)));
+    listWrap.querySelectorAll('[data-edit-apt]').forEach((b) => b.addEventListener('click', () => openAppointmentFormModal(byId[b.dataset.editApt], null, b)));
     listWrap.querySelectorAll('[data-cancel-apt]').forEach((b) => b.addEventListener('click', () => openCancelAppointmentModal(byId[b.dataset.cancelApt])));
     listWrap.querySelectorAll('[data-wa-apt]').forEach((btn) => {
       btn.addEventListener('click', () => {
         window.open(btn.dataset.waUrl, '_blank', 'noopener,noreferrer');
         apiCall('appointments.markReminded', { appointment_id: btn.dataset.waApt }, { write: true })
-          .then(() => { btn.textContent = 'WA ✓'; })
+          .then(() => {
+            btn.textContent = 'WA ✓';
+            storeInvalidate('appointments');
+            storeInvalidate('dashboard');
+          })
           .catch(() => {});
       });
     });
   }
 
-  async function openAppointmentFormModal(existing = null, prefillClient = null) {
+  async function openAppointmentFormModal(existing = null, prefillClient = null, triggerBtn = null) {
     const isEdit = Boolean(existing);
+    if (!isTherapist && therapistOptions.length === 0) {
+      if (triggerBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
+      try {
+        therapistOptions = await getTherapistsOptionsCached({ activeOnly: false });
+      } catch (_) {
+        therapistOptions = [];
+      } finally {
+        if (triggerBtn) setButtonLoading(triggerBtn, false);
+      }
+    }
+
     const activeTherapists = therapistOptions.filter((t) => t.status === 'ACTIVE' || (existing && t.therapist_id === existing.therapist_id));
 
     const modal = openModal({
@@ -294,8 +359,7 @@ export async function renderAppointmentsPage(container, route) {
         return;
       }
 
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Menyimpan...';
+      setButtonLoading(saveBtn, true, 'Menyimpan...');
       const payload = {
         client_id: clientId,
         scheduled_date: form.scheduled_date.value,
@@ -321,13 +385,14 @@ export async function renderAppointmentsPage(container, route) {
           toast('Jadwal baru berhasil dibuat.', 'success');
         }
         closeModal();
-        loadAppointments();
+        storeInvalidate('appointments');
+        storeInvalidate('dashboard');
+        loadAppointments({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
       } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = isEdit ? 'Simpan Perubahan' : 'Buat Jadwal';
+        setButtonLoading(saveBtn, false);
       }
     });
   }
@@ -359,8 +424,7 @@ export async function renderAppointmentsPage(container, route) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearFieldErrors(form);
-      btn.disabled = true;
-      btn.textContent = 'Membatalkan...';
+      setButtonLoading(btn, true, 'Membatalkan...');
       try {
         await apiCall('appointments.cancel', {
           appointment_id: apt.appointment_id,
@@ -368,19 +432,21 @@ export async function renderAppointmentsPage(container, route) {
           cancel_reason: form.cancel_reason.value.trim()
         }, { write: true });
         closeModal();
+        storeInvalidate('appointments');
+        storeInvalidate('dashboard');
         toast('Jadwal dibatalkan dan slot terapis telah dibuka kembali.', 'success');
-        loadAppointments();
+        loadAppointments({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
       } finally {
-        btn.disabled = false;
-        btn.textContent = 'Ya, Batalkan Jadwal';
+        setButtonLoading(btn, false);
       }
     });
   }
 
-  container.querySelector('#btn-add-apt')?.addEventListener('click', () => openAppointmentFormModal(null, null));
+  const addAptBtn = container.querySelector('#btn-add-apt');
+  addAptBtn?.addEventListener('click', () => openAppointmentFormModal(null, null, addAptBtn));
 
   let debounce = null;
   container.querySelector('#apt-search').addEventListener('input', (e) => {
@@ -393,7 +459,7 @@ export async function renderAppointmentsPage(container, route) {
   container.querySelector('#apt-filter-from').addEventListener('change', (e) => { state.date_from = e.target.value; state.page = 1; loadAppointments(); });
   container.querySelector('#apt-filter-to').addEventListener('change', (e) => { state.date_to = e.target.value; state.page = 1; loadAppointments(); });
 
-  await loadAppointments();
+  await loadAppointments({ force: Boolean(route && route.forceRefresh) });
 
   if (route && route.query && route.query.new === '1' && can('appointments:add')) {
     let prefill = null;
@@ -403,6 +469,6 @@ export async function renderAppointmentsPage(container, route) {
         prefill = cRes.data && cRes.data.client;
       } catch (_) {}
     }
-    openAppointmentFormModal(null, prefill);
+    openAppointmentFormModal(null, prefill, addAptBtn);
   }
 }

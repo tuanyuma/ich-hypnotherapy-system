@@ -9,14 +9,31 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="./assets/icons/icon.svg">
   <link rel="apple-touch-icon" href="./assets/icons/icon-192.png">
+  <link rel="preconnect" href="https://script.google.com" crossorigin>
+  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./assets/css/tokens.css">
   <link rel="stylesheet" href="./assets/css/app.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 </head>
 <body>
   <a href="#main-content" class="skip-link">Lewati ke konten utama</a>
+
+  <!-- Global Top Progress Bar (di puncak aplikasi, tepat di bawah address bar browser) -->
+  <div id="top-progress-bar" class="top-progress-bar" role="progressbar" aria-label="Memuat data" aria-hidden="true">
+    <div id="top-progress-fill" class="top-progress-fill"></div>
+  </div>
+
+  <!-- Center Full-Screen Loader KHUSUS Login & Logout -->
+  <div id="center-auth-loader" class="center-auth-loader" role="status" aria-live="assertive" hidden>
+    <div class="center-auth-card">
+      <div class="bs-spinner-lg" aria-hidden="true"></div>
+      <div id="center-auth-loader-text" class="center-auth-text">Memproses...</div>
+      <div class="center-auth-sub">ICH HYPNOTHERAPY</div>
+    </div>
+  </div>
 
   <div id="offline-banner" class="offline-banner" role="status" aria-live="polite" hidden>
     Koneksi internet terputus. Data tidak dapat dimuat atau disimpan sampai koneksi kembali tersambung.

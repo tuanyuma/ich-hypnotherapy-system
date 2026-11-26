@@ -1,8 +1,8 @@
 /**
  * pages/assessments.js — Assessment Awal & Anamnesis (F6):
- * Form input assessment dengan searchable autocomplete klien,
- * diikuti Tabel Riwayat Assessment di bawah form (Lihat, Edit, Hapus),
- * search, filter terapis/tanggal, dan pagination.
+ * - SWR in-memory cache + non-blocking therapist options
+ * - Inline button spinner saat simpan/perbarui form
+ * - Optimistic Delete dengan animasi GSAP keluar + rollback otomatis bila gagal.
  */
 
 import { apiCall } from '../api.js';
@@ -20,8 +20,19 @@ import {
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
+  markRowDeleting,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  storeUpdateListItems,
+  getTherapistsOptionsCached
+} from '../store.js';
+import { animateRowRemove } from '../motion.js';
 
 export async function renderAssessmentsPage(container, route) {
   const actor = getUser();
@@ -30,15 +41,9 @@ export async function renderAssessmentsPage(container, route) {
   const canEdit = can('assessments:edit');
   const canDelete = can('assessments:delete');
 
-  let therapistOptions = [];
-  if (!isTherapist) {
-    try {
-      const optRes = await apiCall('therapists.options', { active_only: false });
-      therapistOptions = (optRes.data && optRes.data.items) || [];
-    } catch (_) {
-      therapistOptions = [];
-    }
-  }
+  let therapistOptions = !isTherapist
+    ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
+    : [];
 
   let initialClient = null;
   if (route && route.query && route.query.client_id) {
@@ -52,6 +57,11 @@ export async function renderAssessmentsPage(container, route) {
 
   const listState = { page: 1, limit: 15, q: '', therapist_id: '', date_from: '', date_to: '' };
   let editingRecord = null;
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    return `assessments:list:p${listState.page}:q=${listState.q}:t=${listState.therapist_id}:f=${listState.date_from}:to=${listState.date_to}`;
+  }
 
   container.innerHTML = `
     ${canAdd || canEdit ? `
@@ -169,6 +179,29 @@ export async function renderAssessmentsPage(container, route) {
   const listWrap = container.querySelector('#asm-list-wrap');
   const pagWrap = container.querySelector('#asm-pagination');
 
+  // Isi opsi terapis di latar belakang bila belum ada di RAM
+  if (!isTherapist && therapistOptions.length === 0) {
+    getTherapistsOptionsCached({ activeOnly: false })
+      .then((opts) => {
+        therapistOptions = opts;
+        const formSelect = container.querySelector('#asm-therapist');
+        if (formSelect) {
+          const prev = formSelect.value || (initialClient ? initialClient.primary_therapist_id : '');
+          formSelect.innerHTML = '<option value="">-- Pilih Terapis --</option>' +
+            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('');
+          if (prev) formSelect.value = prev;
+        }
+        const filterSelect = container.querySelector('#asm-filter-trp');
+        if (filterSelect) {
+          const prevF = filterSelect.value;
+          filterSelect.innerHTML = '<option value="">Semua Terapis</option>' +
+            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)}</option>`).join('');
+          filterSelect.value = prevF;
+        }
+      })
+      .catch(() => {});
+  }
+
   let clientAc = null;
   if (form) {
     form.querySelectorAll('textarea').forEach((ta) => autoResizeTextarea(ta));
@@ -197,6 +230,7 @@ export async function renderAssessmentsPage(container, route) {
     if (acInput) acInput.disabled = false;
     formTitle.textContent = 'Input Assessment Awal & Anamnesis';
     submitBtn.textContent = 'Simpan Assessment';
+    delete submitBtn.dataset.origHtml;
     cancelEditBtn.hidden = true;
   }
 
@@ -229,6 +263,7 @@ export async function renderAssessmentsPage(container, route) {
 
     formTitle.textContent = `Edit Assessment — ${rec.client_name} (${formatDateId(rec.assessment_date)})`;
     submitBtn.textContent = 'Perbarui Assessment';
+    delete submitBtn.dataset.origHtml;
     cancelEditBtn.hidden = false;
     container.querySelector('#asm-form-card')?.scrollIntoView({ behavior: 'smooth' });
   }
@@ -246,8 +281,7 @@ export async function renderAssessmentsPage(container, route) {
         return;
       }
 
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Menyimpan...';
+      setButtonLoading(submitBtn, true, 'Menyimpan...');
 
       const payload = {
         client_id: clientId,
@@ -275,20 +309,35 @@ export async function renderAssessmentsPage(container, route) {
           await apiCall('assessments.create', payload, { write: true });
           toast('Assessment awal berhasil disimpan.', 'success');
         }
+        storeInvalidate('assessments');
+        storeInvalidate('clients');
+        setButtonLoading(submitBtn, false);
         resetFormToCreate();
-        loadAssessments();
+        loadAssessments({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = editingRecord ? 'Perbarui Assessment' : 'Simpan Assessment';
+        setButtonLoading(submitBtn, false);
       }
     });
   }
 
-  async function loadAssessments() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  async function loadAssessments({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        listState.page = p;
+        loadAssessments();
+      });
+      if (storeIsFresh(key, 30000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('assessments.list', {
         page: listState.page,
@@ -300,14 +349,21 @@ export async function renderAssessmentsPage(container, route) {
           date_to: listState.date_to || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        listState.page = p;
-        loadAssessments();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          listState.page = p;
+          loadAssessments();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat riwayat assessment</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat riwayat assessment</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -354,7 +410,7 @@ export async function renderAssessmentsPage(container, route) {
           </thead>
           <tbody>
             ${items.map((a) => `
-              <tr>
+              <tr data-row-id="${esc(a.assessment_id)}">
                 <td class="font-mono text-sm"><strong>${esc(formatDateId(a.assessment_date))}</strong></td>
                 <td>
                   <button type="button" class="link-btn" data-open-cln="${esc(a.client_id)}">${esc(a.client_name || '-')}</button>
@@ -383,6 +439,7 @@ export async function renderAssessmentsPage(container, route) {
     listWrap.querySelectorAll('[data-del-asm]').forEach((b) => {
       b.addEventListener('click', async () => {
         const rec = byId[b.dataset.delAsm];
+        if (!rec) return;
         const ok = await confirmDialog({
           title: 'Hapus Assessment',
           message: `Hapus (soft delete) assessment milik "${rec.client_name}" tanggal ${formatDateId(rec.assessment_date)}?`,
@@ -390,13 +447,34 @@ export async function renderAssessmentsPage(container, route) {
           danger: true
         });
         if (!ok) return;
+
+        const rowEl = b.closest('tr');
+        setButtonLoading(b, true, 'Menghapus...');
+        markRowDeleting(rowEl, true);
+
+        const deleteReq = apiCall('assessments.delete', {
+          assessment_id: rec.assessment_id,
+          expected_version: rec.version
+        }, { write: true });
+
+        await animateRowRemove(rowEl);
+        if (rowEl && rowEl.parentElement) rowEl.remove();
+
+        storeUpdateListItems('assessments', (arr) => arr.filter((item) => item.assessment_id !== rec.assessment_id));
+        const tbody = listWrap.querySelector('tbody');
+        if (tbody && tbody.children.length === 0) renderTable([]);
+
         try {
-          await apiCall('assessments.delete', { assessment_id: rec.assessment_id, expected_version: rec.version }, { write: true });
+          await deleteReq;
+          storeInvalidate('assessments');
+          storeInvalidate('clients');
           toast('Assessment berhasil dihapus.', 'success');
           if (editingRecord && editingRecord.assessment_id === rec.assessment_id) resetFormToCreate();
-          loadAssessments();
+          loadAssessments({ force: true, silent: true });
         } catch (err) {
+          storeInvalidate('assessments');
           toast(err.message, 'danger');
+          loadAssessments({ force: true, silent: true });
         }
       });
     });
@@ -411,5 +489,5 @@ export async function renderAssessmentsPage(container, route) {
   container.querySelector('#asm-filter-from').addEventListener('change', (e) => { listState.date_from = e.target.value; listState.page = 1; loadAssessments(); });
   container.querySelector('#asm-filter-to').addEventListener('change', (e) => { listState.date_to = e.target.value; listState.page = 1; loadAssessments(); });
 
-  loadAssessments();
+  await loadAssessments({ force: Boolean(route && route.forceRefresh) });
 }

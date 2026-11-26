@@ -10,6 +10,8 @@ import { apiCall } from '../api.js';
 import { getUser, can, roleLabel } from '../auth.js';
 import { navigate } from '../router.js';
 import { esc, formatDateId, statusBadge, renderSkeletonCards, renderSkeletonTable, toast } from '../ui.js';
+import { storeGet, storeSet, storeIsFresh, prefetchCoreModules } from '../store.js';
+import { animateBentoStagger } from '../motion.js';
 
 function getGreetingWib() {
   const now = new Date();
@@ -57,12 +59,13 @@ function buildDonutSvg(baru, proses, selesai) {
   `;
 }
 
-export async function renderDashboardPage(container) {
-  container.innerHTML = renderSkeletonCards(4) + renderSkeletonTable(5);
+export async function renderDashboardPage(container, route) {
+  const cacheKey = 'dashboard:summary';
+  const cached = storeGet(cacheKey);
+  const forceRefresh = Boolean(route && route.forceRefresh);
+  let activeFilter = 'ALL';
 
-  try {
-    const res = await apiCall('dashboard.summary', { upcoming_limit: 15 });
-    const d = res.data;
+  function paintDashboard(d, withAnimation) {
     const kpi = d.kpi || {};
     const statusMap = d.client_status_summary || {};
     const upcoming = d.upcoming_appointments || [];
@@ -159,11 +162,11 @@ export async function renderDashboardPage(container) {
             </div>
 
             <div class="pill-tabs" id="dash-apt-tabs" role="tablist" aria-label="Filter jadwal terdekat">
-              <button type="button" class="pill-tab is-active" data-filter="ALL">Semua (${upcoming.length})</button>
-              <button type="button" class="pill-tab" data-filter="SCHEDULED">Scheduled (${upcoming.filter((a) => a.status === 'SCHEDULED').length})</button>
-              <button type="button" class="pill-tab" data-filter="CONFIRMED">Confirmed (${upcoming.filter((a) => a.status === 'CONFIRMED').length})</button>
-              <button type="button" class="pill-tab" data-filter="ONLINE">Online (${onlineCount})</button>
-              <button type="button" class="pill-tab" data-filter="OFFLINE">Offline (${offlineCount})</button>
+              <button type="button" class="pill-tab ${activeFilter === 'ALL' ? 'is-active' : ''}" data-filter="ALL">Semua (${upcoming.length})</button>
+              <button type="button" class="pill-tab ${activeFilter === 'SCHEDULED' ? 'is-active' : ''}" data-filter="SCHEDULED">Scheduled (${upcoming.filter((a) => a.status === 'SCHEDULED').length})</button>
+              <button type="button" class="pill-tab ${activeFilter === 'CONFIRMED' ? 'is-active' : ''}" data-filter="CONFIRMED">Confirmed (${upcoming.filter((a) => a.status === 'CONFIRMED').length})</button>
+              <button type="button" class="pill-tab ${activeFilter === 'ONLINE' ? 'is-active' : ''}" data-filter="ONLINE">Online (${onlineCount})</button>
+              <button type="button" class="pill-tab ${activeFilter === 'OFFLINE' ? 'is-active' : ''}" data-filter="OFFLINE">Offline (${offlineCount})</button>
             </div>
 
             <div id="dash-upcoming-table"></div>
@@ -311,6 +314,7 @@ export async function renderDashboardPage(container) {
     const tableMount = container.querySelector('#dash-upcoming-table');
 
     function renderUpcomingTable(filterKey) {
+      activeFilter = filterKey;
       let filtered = upcoming;
       if (filterKey === 'SCHEDULED' || filterKey === 'CONFIRMED') {
         filtered = upcoming.filter((a) => a.status === filterKey);
@@ -404,7 +408,7 @@ export async function renderDashboardPage(container) {
         renderUpcomingTable(tab.dataset.filter);
       });
     });
-    renderUpcomingTable('ALL');
+    renderUpcomingTable(activeFilter);
 
     container.querySelectorAll('[data-qa]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -419,15 +423,42 @@ export async function renderDashboardPage(container) {
     });
 
     container.querySelector('#btn-all-appointments')?.addEventListener('click', () => navigate('#/appointments'));
+
+    if (withAnimation) {
+      animateBentoStagger(container);
+    }
+  }
+
+  // SWR: Tampilkan instan dari RAM bila tersedia, lalu segarkan diam-diam di latar belakang
+  if (cached && cached.data && !forceRefresh) {
+    paintDashboard(cached.data, true);
+    if (storeIsFresh(cacheKey, 35000)) {
+      setTimeout(() => prefetchCoreModules(), 250);
+      return;
+    }
+  } else {
+    container.innerHTML = renderSkeletonCards(4) + renderSkeletonTable(5);
+  }
+
+  try {
+    const res = await apiCall('dashboard.summary', { upcoming_limit: 15 });
+    const { changed } = storeSet(cacheKey, res.data);
+    if (!cached || forceRefresh || changed) {
+      paintDashboard(res.data, !cached);
+    }
+    // Prefetch modul inti (Terapis, Klien hal. 1, Jadwal hal. 1) di latar belakang
+    setTimeout(() => prefetchCoreModules(), 350);
   } catch (err) {
-    container.innerHTML = `
-      <div class="card empty-state">
-        <p class="empty-state-title">Gagal memuat Dashboard</p>
-        <p class="empty-state-desc">${esc(err.message)}</p>
-        <button type="button" class="btn btn-primary" id="btn-retry-dash">Coba Lagi</button>
-      </div>
-    `;
+    if (!cached) {
+      container.innerHTML = `
+        <div class="card empty-state">
+          <p class="empty-state-title">Gagal memuat Dashboard</p>
+          <p class="empty-state-desc">${esc(err.message)}</p>
+          <button type="button" class="btn btn-primary" id="btn-retry-dash">Coba Lagi</button>
+        </div>
+      `;
+      container.querySelector('#btn-retry-dash')?.addEventListener('click', () => renderDashboardPage(container, { forceRefresh: true }));
+    }
     toast(err.message, 'danger');
-    container.querySelector('#btn-retry-dash')?.addEventListener('click', () => renderDashboardPage(container));
   }
 }

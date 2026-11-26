@@ -1,8 +1,9 @@
 /**
  * pages/clients.js — Data Induk Klien & Halaman Detail Klien (F5):
- * - Daftar klien (search global Nama/ID/WA, filter status & sumber informasi, pagination)
- * - Form CRUD klien (anti-duplikat WA dengan tautan langsung ke klien bentrok, sumber OTHER wajib detail)
- * - Detail Klien (#/clients/:id): biodata + tab Jadwal, Assessment (sesuai izin), & RME (sesuai izin).
+ * - SWR in-memory cache (tampil instan dari RAM & sinkronisasi latar via Top Progress Bar)
+ * - Form CRUD klien dengan inline button spinner & cache opsi terapis instan
+ * - Optimistic Delete dengan animasi keluar halus + rollback otomatis bila gagal
+ * - Detail Klien (#/clients/:id) dengan SWR cache.
  */
 
 import { apiCall } from '../api.js';
@@ -20,12 +21,23 @@ import {
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
+  markRowDeleting,
   toast
 } from '../ui.js';
+import {
+  storeGet,
+  storeSet,
+  storeIsFresh,
+  storeInvalidate,
+  storeUpdateListItems,
+  getTherapistsOptionsCached
+} from '../store.js';
+import { animateRowRemove } from '../motion.js';
 
 export async function renderClientsPage(container, route) {
   if (route && route.param) {
-    await renderClientDetailView(container, route.param);
+    await renderClientDetailView(container, route.param, Boolean(route.forceRefresh));
     return;
   }
   await renderClientsListView(container, route);
@@ -35,6 +47,14 @@ async function renderClientsListView(container, route) {
   const actor = getUser();
   const initialQ = (route && route.query && route.query.q) ? String(route.query.q).trim() : '';
   const state = { page: 1, limit: 20, q: initialQ, status: '', source_channel: '' };
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    if (state.page === 1 && !state.q && !state.status && !state.source_channel) {
+      return 'clients:list:p1:default';
+    }
+    return `clients:list:p${state.page}:q=${state.q}:s=${state.status}:src=${state.source_channel}`;
+  }
 
   container.innerHTML = `
     <section class="card">
@@ -72,8 +92,24 @@ async function renderClientsListView(container, route) {
   const statusEl = container.querySelector('#cln-filter-status');
   const sourceEl = container.querySelector('#cln-filter-source');
 
-  async function loadClients() {
-    listWrap.innerHTML = renderSkeletonTable(5);
+  async function loadClients({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        state.page = p;
+        loadClients();
+      });
+      if (storeIsFresh(key, 30000)) {
+        return;
+      }
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(5);
+    }
+
     try {
       const res = await apiCall('clients.list', {
         page: state.page,
@@ -84,14 +120,21 @@ async function renderClientsListView(container, route) {
           source_channel: state.source_channel || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        state.page = p;
-        loadClients();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          state.page = p;
+          loadClients();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat data klien</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat data klien</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -123,7 +166,7 @@ async function renderClientsListView(container, route) {
           </thead>
           <tbody>
             ${items.map((c) => `
-              <tr>
+              <tr data-row-id="${esc(c.client_id)}">
                 <td>
                   <div><button type="button" class="link-btn" data-detail-cln="${esc(c.client_id)}">${esc(c.full_name)}</button></div>
                   <div class="text-xs text-muted font-mono">${esc(c.client_code)}</div>
@@ -160,11 +203,16 @@ async function renderClientsListView(container, route) {
       btn.addEventListener('click', () => navigate(`#/clients/${btn.dataset.detailCln}`));
     });
     listWrap.querySelectorAll('[data-edit-cln]').forEach((btn) => {
-      btn.addEventListener('click', () => openClientFormModal(byId[btn.dataset.editCln], actor, loadClients));
+      btn.addEventListener('click', () => openClientFormModal(byId[btn.dataset.editCln], actor, () => {
+        storeInvalidate('clients');
+        storeInvalidate('dashboard');
+        loadClients({ force: true, silent: true });
+      }, btn));
     });
     listWrap.querySelectorAll('[data-del-cln]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const c = byId[btn.dataset.delCln];
+        if (!c) return;
         const ok = await confirmDialog({
           title: 'Hapus Data Klien',
           message: `Hapus (soft delete) klien "${c.full_name}" (${c.client_code})?`,
@@ -172,19 +220,46 @@ async function renderClientsListView(container, route) {
           danger: true
         });
         if (!ok) return;
+
+        const rowEl = btn.closest('tr');
+        setButtonLoading(btn, true, 'Menghapus...');
+        markRowDeleting(rowEl, true);
+
+        // Kirim hapus ke server sambil animasikan baris keluar (Optimistic UI)
+        const deleteReq = apiCall('clients.delete', { client_id: c.client_id, expected_version: c.version }, { write: true });
+        await animateRowRemove(rowEl);
+        if (rowEl && rowEl.parentElement) rowEl.remove();
+
+        // Update RAM cache secara optimistik
+        storeUpdateListItems('clients', (arr) => arr.filter((item) => item.client_id !== c.client_id));
+        const tbody = listWrap.querySelector('tbody');
+        if (tbody && tbody.children.length === 0) {
+          renderTable([]);
+        }
+
         try {
-          await apiCall('clients.delete', { client_id: c.client_id, expected_version: c.version }, { write: true });
-          toast('Data klien dihapus.', 'success');
-          loadClients();
+          await deleteReq;
+          storeInvalidate('clients');
+          storeInvalidate('dashboard');
+          toast(`Klien "${c.full_name}" berhasil dihapus.`, 'success');
+          loadClients({ force: true, silent: true });
         } catch (err) {
+          // Rollback bila server menolak penghapusan
+          storeInvalidate('clients');
           toast(err.message, 'danger');
+          loadClients({ force: true, silent: true });
         }
       });
     });
   }
 
-  container.querySelector('#btn-add-client')?.addEventListener('click', () => {
-    openClientFormModal(null, actor, loadClients);
+  const addBtn = container.querySelector('#btn-add-client');
+  addBtn?.addEventListener('click', () => {
+    openClientFormModal(null, actor, () => {
+      storeInvalidate('clients');
+      storeInvalidate('dashboard');
+      loadClients({ force: true, silent: true });
+    }, addBtn);
   });
 
   let debounce = null;
@@ -195,23 +270,31 @@ async function renderClientsListView(container, route) {
   statusEl.addEventListener('change', () => { state.status = statusEl.value; state.page = 1; loadClients(); });
   sourceEl.addEventListener('change', () => { state.source_channel = sourceEl.value; state.page = 1; loadClients(); });
 
-  await loadClients();
+  await loadClients({ force: Boolean(route && route.forceRefresh) });
 
   if (route && route.query && route.query.new === '1' && can('clients:add')) {
-    openClientFormModal(null, actor, loadClients);
+    openClientFormModal(null, actor, () => {
+      storeInvalidate('clients');
+      storeInvalidate('dashboard');
+      loadClients({ force: true, silent: true });
+    }, addBtn);
   }
 }
 
-async function openClientFormModal(existing, actor, onSaved) {
+async function openClientFormModal(existing, actor, onSaved, triggerBtn = null) {
   const isEdit = Boolean(existing);
   const isTherapist = actor && actor.role === 'THERAPIST';
   let therapistOptions = [];
+
   if (!isTherapist) {
+    const hasCached = Boolean(storeGet('therapists:options:active') || storeGet('therapists:options:all'));
+    if (!hasCached && triggerBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
     try {
-      const optRes = await apiCall('therapists.options', { active_only: true });
-      therapistOptions = (optRes.data && optRes.data.items) || [];
+      therapistOptions = await getTherapistsOptionsCached({ activeOnly: true });
     } catch (_) {
       therapistOptions = [];
+    } finally {
+      if (!hasCached && triggerBtn) setButtonLoading(triggerBtn, false);
     }
   }
 
@@ -319,8 +402,7 @@ async function openClientFormModal(existing, actor, onSaved) {
     e.preventDefault();
     clearFieldErrors(form);
     dupBanner.hidden = true;
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Menyimpan...';
+    setButtonLoading(saveBtn, true, 'Menyimpan...');
 
     const payload = {
       full_name: form.full_name.value.trim(),
@@ -367,8 +449,7 @@ async function openClientFormModal(existing, actor, onSaved) {
       }
       toast(err.message, 'danger');
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = isEdit ? 'Simpan Perubahan' : 'Simpan Klien';
+      setButtonLoading(saveBtn, false);
     }
   });
 }
@@ -377,13 +458,13 @@ async function openClientFormModal(existing, actor, onSaved) {
 // Halaman Detail Klien (#/clients/:id)
 // ============================================================================
 
-async function renderClientDetailView(container, clientId) {
+async function renderClientDetailView(container, clientId, forceRefresh = false) {
   const actor = getUser();
-  container.innerHTML = renderSkeletonTable(6);
+  const detailKey = `clients:detail:${clientId}`;
+  const cached = storeGet(detailKey);
+  let activeTab = 'appointments';
 
-  try {
-    const res = await apiCall('clients.detail', { client_id: clientId });
-    const detail = res.data;
+  function paintDetail(detail) {
     const c = detail.client;
     const appointments = detail.appointments || [];
     const hasAssessments = Array.isArray(detail.assessments) && can('assessments:view');
@@ -426,9 +507,9 @@ async function renderClientDetailView(container, clientId) {
 
       <section class="card">
         <div class="tabs-bar" role="tablist">
-          <button type="button" class="tab-btn is-active" data-tab="appointments" role="tab">Jadwal (${appointments.length})</button>
-          ${hasAssessments ? `<button type="button" class="tab-btn" data-tab="assessments" role="tab">Assessment Awal (${detail.assessments.length})</button>` : ''}
-          ${hasRme ? `<button type="button" class="tab-btn" data-tab="rme" role="tab">RME / Sesi Terapi (${detail.rme_sessions.length})</button>` : ''}
+          <button type="button" class="tab-btn ${activeTab === 'appointments' ? 'is-active' : ''}" data-tab="appointments" role="tab">Jadwal (${appointments.length})</button>
+          ${hasAssessments ? `<button type="button" class="tab-btn ${activeTab === 'assessments' ? 'is-active' : ''}" data-tab="assessments" role="tab">Assessment Awal (${detail.assessments.length})</button>` : ''}
+          ${hasRme ? `<button type="button" class="tab-btn ${activeTab === 'rme' ? 'is-active' : ''}" data-tab="rme" role="tab">RME / Sesi Terapi (${detail.rme_sessions.length})</button>` : ''}
         </div>
         <div id="client-tab-content"></div>
       </section>
@@ -437,6 +518,7 @@ async function renderClientDetailView(container, clientId) {
     const tabContent = container.querySelector('#client-tab-content');
 
     function renderTab(name) {
+      activeTab = name;
       container.querySelectorAll('.tab-btn').forEach((b) => {
         b.classList.toggle('is-active', b.dataset.tab === name);
       });
@@ -509,23 +591,45 @@ async function renderClientDetailView(container, clientId) {
     container.querySelectorAll('.tab-btn').forEach((btn) => {
       btn.addEventListener('click', () => renderTab(btn.dataset.tab));
     });
-    renderTab('appointments');
+    renderTab(activeTab);
 
     container.querySelector('#btn-back-clients')?.addEventListener('click', () => navigate('#/clients'));
-    container.querySelector('#btn-edit-detail-cln')?.addEventListener('click', () => {
-      openClientFormModal(c, actor, () => renderClientDetailView(container, clientId));
+    const editBtn = container.querySelector('#btn-edit-detail-cln');
+    editBtn?.addEventListener('click', () => {
+      openClientFormModal(c, actor, () => {
+        storeInvalidate('clients');
+        storeInvalidate('dashboard');
+        renderClientDetailView(container, clientId, true);
+      }, editBtn);
     });
     container.querySelector('#btn-quick-apt')?.addEventListener('click', () => navigate(`#/appointments?client_id=${clientId}&new=1`));
     container.querySelector('#btn-quick-asm')?.addEventListener('click', () => navigate(`#/assessments?client_id=${clientId}`));
     container.querySelector('#btn-quick-rme')?.addEventListener('click', () => navigate(`#/rme?client_id=${clientId}`));
+  }
+
+  if (cached && cached.data && !forceRefresh) {
+    paintDetail(cached.data);
+    if (storeIsFresh(detailKey, 25000)) return;
+  } else {
+    container.innerHTML = renderSkeletonTable(6);
+  }
+
+  try {
+    const res = await apiCall('clients.detail', { client_id: clientId });
+    const { changed } = storeSet(detailKey, res.data);
+    if (!cached || forceRefresh || changed) {
+      paintDetail(res.data);
+    }
   } catch (err) {
-    container.innerHTML = `
-      <div class="card empty-state">
-        <p class="empty-state-title">Tidak dapat memuat Detail Klien</p>
-        <p class="empty-state-desc">${esc(err.message)}</p>
-        <button type="button" class="btn btn-primary" onclick="window.location.hash='#/clients'">Kembali ke Data Klien</button>
-      </div>
-    `;
+    if (!cached) {
+      container.innerHTML = `
+        <div class="card empty-state">
+          <p class="empty-state-title">Tidak dapat memuat Detail Klien</p>
+          <p class="empty-state-desc">${esc(err.message)}</p>
+          <button type="button" class="btn btn-primary" onclick="window.location.hash='#/clients'">Kembali ke Data Klien</button>
+        </div>
+      `;
+    }
     toast(err.message, 'danger');
   }
 }

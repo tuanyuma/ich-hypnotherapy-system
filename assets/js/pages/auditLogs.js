@@ -1,7 +1,7 @@
 /**
  * pages/auditLogs.js — Audit Log Otomatis (F9):
- * Read-only untuk ADMIN; OWNER berhak menjalankan Purge Log Lama
- * dengan konfirmasi eksplisit & alasan (aksi purge tetap tercatat sebagai PURGE_AUDIT).
+ * - SWR in-memory cache + Top Progress Bar background refresh
+ * - Inline button spinner saat OWNER menjalankan Purge Log Lama.
  */
 
 import { apiCall } from '../api.js';
@@ -15,8 +15,10 @@ import {
   closeModal,
   clearFieldErrors,
   showFieldErrors,
+  setButtonLoading,
   toast
 } from '../ui.js';
+import { storeGet, storeSet, storeIsFresh, storeInvalidate } from '../store.js';
 
 const ACTION_BADGE_MAP = {
   LOGIN: 'badge-info',
@@ -30,9 +32,14 @@ const ACTION_BADGE_MAP = {
   PURGE_AUDIT: 'badge-danger'
 };
 
-export async function renderAuditLogsPage(container) {
+export async function renderAuditLogsPage(container, route) {
   const canPurge = can('audit:purge');
   const state = { page: 1, limit: 25, q: '', action_type: '', module: '', date_from: '', date_to: '' };
+  let activeFetchId = 0;
+
+  function buildCacheKey() {
+    return `audit:list:p${state.page}:q=${state.q}:a=${state.action_type}:m=${state.module}:f=${state.date_from}:to=${state.date_to}`;
+  }
 
   container.innerHTML = `
     <section class="card">
@@ -82,8 +89,22 @@ export async function renderAuditLogsPage(container) {
   const listWrap = container.querySelector('#aud-list-wrap');
   const pagWrap = container.querySelector('#aud-pagination');
 
-  async function loadAudit() {
-    listWrap.innerHTML = renderSkeletonTable(6);
+  async function loadAudit({ force = false, silent = false } = {}) {
+    const fetchId = ++activeFetchId;
+    const key = buildCacheKey();
+    const cached = storeGet(key);
+
+    if (cached && Array.isArray(cached.data) && !force) {
+      renderTable(cached.data);
+      renderPagination(pagWrap, cached.meta, (p) => {
+        state.page = p;
+        loadAudit();
+      });
+      if (storeIsFresh(key, 20000)) return;
+    } else if (!silent) {
+      listWrap.innerHTML = renderSkeletonTable(6);
+    }
+
     try {
       const res = await apiCall('audit.list', {
         page: state.page,
@@ -96,14 +117,21 @@ export async function renderAuditLogsPage(container) {
           date_to: state.date_to || undefined
         }
       });
+      if (fetchId !== activeFetchId) return;
       const items = (res.data && res.data.items) || [];
-      renderTable(items);
-      renderPagination(pagWrap, res.meta, (p) => {
-        state.page = p;
-        loadAudit();
-      });
+      const { changed } = storeSet(key, items, res.meta);
+      if (!cached || force || changed) {
+        renderTable(items);
+        renderPagination(pagWrap, res.meta, (p) => {
+          state.page = p;
+          loadAudit();
+        });
+      }
     } catch (err) {
-      listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat Audit Log</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      if (fetchId !== activeFetchId) return;
+      if (!cached) {
+        listWrap.innerHTML = `<div class="empty-state"><p class="empty-state-title">Gagal memuat Audit Log</p><p class="empty-state-desc">${esc(err.message)}</p></div>`;
+      }
       toast(err.message, 'danger');
     }
   }
@@ -185,8 +213,7 @@ export async function renderAuditLogsPage(container) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearFieldErrors(form);
-      btn.disabled = true;
-      btn.textContent = 'Memproses...';
+      setButtonLoading(btn, true, 'Menghapus...');
       try {
         const res = await apiCall('audit.purge', {
           before_date: form.before_date.value,
@@ -194,15 +221,15 @@ export async function renderAuditLogsPage(container) {
           confirm_text: form.confirm_text.value.trim()
         }, { write: true });
         closeModal();
+        storeInvalidate('audit');
         toast(`${res.data.deleted_count} entri Audit Log lama dibersihkan dan dicatat sebagai PURGE_AUDIT.`, 'success');
         state.page = 1;
-        loadAudit();
+        loadAudit({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
       } finally {
-        btn.disabled = false;
-        btn.textContent = 'Hapus Log Lama';
+        setButtonLoading(btn, false);
       }
     });
   }
@@ -219,5 +246,5 @@ export async function renderAuditLogsPage(container) {
   container.querySelector('#aud-filter-from').addEventListener('change', (e) => { state.date_from = e.target.value; state.page = 1; loadAudit(); });
   container.querySelector('#aud-filter-to').addEventListener('change', (e) => { state.date_to = e.target.value; state.page = 1; loadAudit(); });
 
-  loadAudit();
+  await loadAudit({ force: Boolean(route && route.forceRefresh) });
 }

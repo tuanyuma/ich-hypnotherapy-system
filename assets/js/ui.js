@@ -228,7 +228,7 @@ export function confirmDialog({
 export function clearFieldErrors(formEl) {
   if (!formEl) return;
   formEl.querySelectorAll('.is-invalid').forEach((el) => el.classList.remove('is-invalid'));
-  formEl.querySelectorAll('.field-error').forEach((el) => el.remove());
+  formEl.querySelectorAll('[data-dynamic-error="1"]').forEach((el) => el.remove());
 }
 
 export function showFieldErrors(formEl, fields) {
@@ -240,6 +240,7 @@ export function showFieldErrors(formEl, fields) {
     input.classList.add('is-invalid');
     const err = document.createElement('div');
     err.className = 'field-error';
+    err.setAttribute('data-dynamic-error', '1');
     err.textContent = msg;
     const fieldWrap = input.closest('.field') || input.parentElement;
     if (fieldWrap) fieldWrap.appendChild(err);

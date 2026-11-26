@@ -396,13 +396,7 @@ async function bootstrap() {
   initIdleActivityWatcher();
   initPwaSupport();
 
-  // Muat pengaturan publik non-sensitif (nama klinik, durasi idle)
-  const health = await apiHealth();
-  if (health && health.ok && health.data && health.data.public_settings) {
-    setPublicSettings(health.data.public_settings);
-  }
-
-  // Verifikasi sesi tersimpan di server saat reload
+  // Render rute awal segera agar halaman login tampil instan tanpa menunggu cold-start GAS
   if (isAuthenticated()) {
     await verifySessionWithServer();
   }
@@ -412,6 +406,21 @@ async function bootstrap() {
   } else {
     renderCurrentRoute();
   }
+
+  // Muat pengaturan publik non-sensitif (nama klinik, durasi idle) di latar belakang
+  apiHealth().then((health) => {
+    if (health && health.ok && health.data && health.data.public_settings) {
+      setPublicSettings(health.data.public_settings);
+      const clinicName = health.data.public_settings.clinic_name;
+      if (clinicName) {
+        document.title = `${clinicName} — Sistem Klinik Internal`;
+        const brandEl = document.getElementById('sidebar-clinic-name');
+        if (brandEl) brandEl.textContent = clinicName;
+        const authTitle = document.querySelector('#auth-root .auth-title');
+        if (authTitle && window.location.hash === '#/login') authTitle.textContent = clinicName;
+      }
+    }
+  }).catch(() => {});
 }
 
 bootstrap();

@@ -1013,6 +1013,16 @@ html, body {
 
 .field-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .field-error { font-size: var(--text-xs); color: var(--color-danger); font-weight: 600; }
+.form-alert-error {
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: var(--color-danger-soft);
+  border: 1px solid #F5B8BF;
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.45;
+}
 
 /* Autocomplete Dropdown */
 .autocomplete-wrap { position: relative; }

@@ -45,7 +45,7 @@ export function renderLoginView(container, { onLoginSuccess }) {
           </div>
         </div>
 
-        <div id="login-global-error" class="field-error mb-3" role="alert" hidden></div>
+        <div id="login-global-error" class="form-alert-error mb-3" role="alert" hidden></div>
 
         <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block mt-2">
           Masuk ke Aplikasi
@@ -96,8 +96,10 @@ export function renderLoginView(container, { onLoginSuccess }) {
       onLoginSuccess(res.data.user);
     } catch (err) {
       if (err.fields) showFieldErrors(form, err.fields);
-      errBox.textContent = err.message || 'Gagal login.';
+      const msg = (err && err.message) || 'Gagal login. Periksa kembali username dan password Anda.';
+      errBox.textContent = msg;
       errBox.hidden = false;
+      toast(msg, 'danger');
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Masuk ke Aplikasi';
@@ -134,7 +136,7 @@ export function renderMustChangePasswordView(container, { onComplete }) {
           <input id="confirm-pw" name="confirm_password" type="password" class="input" autocomplete="new-password" required>
         </div>
 
-        <div id="mcp-error" class="field-error mb-3" role="alert" hidden></div>
+        <div id="mcp-error" class="form-alert-error mb-3" role="alert" hidden></div>
 
         <button type="submit" id="btn-mcp-submit" class="btn btn-primary btn-block mt-2">
           Simpan Password Baru &amp; Masuk
@@ -180,8 +182,10 @@ export function renderMustChangePasswordView(container, { onComplete }) {
       onComplete();
     } catch (err) {
       if (err.fields) showFieldErrors(form, err.fields);
-      errBox.textContent = err.message;
+      const msg = (err && err.message) || 'Gagal menyimpan password baru.';
+      errBox.textContent = msg;
       errBox.hidden = false;
+      toast(msg, 'danger');
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Simpan Password Baru & Masuk';

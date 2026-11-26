@@ -416,7 +416,7 @@ export async function renderDashboardPage(container, route) {
         if (target === 'client') navigate('#/clients?new=1');
         if (target === 'appointment') navigate('#/appointments?new=1');
         if (target === 'rme') navigate('#/rme?new=1');
-        if (target === 'assessment') navigate('#/assessments');
+        if (target === 'assessment') navigate('#/assessments?new=1');
         if (target === 'therapists') navigate('#/therapists');
         if (target === 'audit') navigate('#/audit');
       });

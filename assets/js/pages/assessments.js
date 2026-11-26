@@ -1,8 +1,8 @@
 /**
  * pages/assessments.js — Assessment Awal & Anamnesis (F6):
- * - SWR in-memory cache + non-blocking therapist options
- * - Inline button spinner saat simpan/perbarui form
- * - Optimistic Delete dengan animasi GSAP keluar + rollback otomatis bila gagal.
+ * - Tampilan utama fokus langsung ke Tabel Riwayat Assessment Awal (list-first)
+ * - Tombol "+ Tambah Assessment" & aksi "Edit" membuka Modal Form beranimasi GSAP smooth
+ * - SWR in-memory cache + Top Progress Bar + inline spinner + Optimistic Delete dengan rollback.
  */
 
 import { apiCall } from '../api.js';
@@ -17,6 +17,7 @@ import {
   mountClientAutocomplete,
   autoResizeTextarea,
   openModal,
+  closeModal,
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
@@ -45,18 +46,7 @@ export async function renderAssessmentsPage(container, route) {
     ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
     : [];
 
-  let initialClient = null;
-  if (route && route.query && route.query.client_id) {
-    try {
-      const cRes = await apiCall('clients.get', { client_id: route.query.client_id });
-      initialClient = cRes.data && cRes.data.client;
-    } catch (_) {
-      initialClient = null;
-    }
-  }
-
   const listState = { page: 1, limit: 15, q: '', therapist_id: '', date_from: '', date_to: '' };
-  let editingRecord = null;
   let activeFetchId = 0;
 
   function buildCacheKey() {
@@ -64,95 +54,13 @@ export async function renderAssessmentsPage(container, route) {
   }
 
   container.innerHTML = `
-    ${canAdd || canEdit ? `
-      <section class="card" id="asm-form-card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title" id="asm-form-title">Input Assessment Awal &amp; Anamnesis</h2>
-            <p class="card-desc">Pilih klien menggunakan pencarian cepat, lalu lengkapi hasil anamnesis awal.</p>
-          </div>
-          <button type="button" class="btn btn-secondary btn-sm" id="btn-asm-cancel-edit" hidden>Batal Edit</button>
-        </div>
-
-        <form id="asm-form" novalidate>
-          <div class="form-grid form-grid-3">
-            <div class="field">
-              <label>Klien <span class="req-star">*</span></label>
-              <div id="asm-client-ac"></div>
-            </div>
-            ${!isTherapist ? `
-              <div class="field">
-                <label for="asm-therapist">Terapis <span class="req-star">*</span></label>
-                <select id="asm-therapist" name="therapist_id" class="select" required>
-                  <option value="">-- Pilih Terapis --</option>
-                  ${therapistOptions.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('')}
-                </select>
-              </div>
-            ` : `
-              <div class="field">
-                <label>Terapis</label>
-                <input class="input" type="text" value="${esc(actor.full_name)} (Otomatis)" disabled>
-              </div>
-            `}
-            <div class="field">
-              <label for="asm-date">Tanggal Assessment <span class="req-star">*</span></label>
-              <input id="asm-date" name="assessment_date" class="input" type="date" value="${esc(todayInputDate())}" required>
-            </div>
-          </div>
-
-          <div class="form-grid form-grid-2 mt-4">
-            <div class="field field-span-full">
-              <label for="asm-main">Keluhan Utama <span class="req-star">*</span></label>
-              <textarea id="asm-main" name="main_complaint" class="textarea textarea-clinical"
-                placeholder="Tuliskan keluhan utama klien secara menyeluruh..." required></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-history">Riwayat Keluhan</label>
-              <textarea id="asm-history" name="complaint_history" class="textarea" placeholder="Sejak kapan, perkembangan gejala..."></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-triggers">Pemicu (Triggers)</label>
-              <textarea id="asm-triggers" name="triggers" class="textarea" placeholder="Situasi, pola pikir, atau kejadian pemicu..."></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-med">Riwayat Medis / Psikologis</label>
-              <textarea id="asm-med" name="medical_history" class="textarea" placeholder="Riwayat pengobatan, konsultasi sebelumnya..."></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-goals">Tujuan Terapi</label>
-              <textarea id="asm-goals" name="therapy_goals" class="textarea" placeholder="Target perubahan yang diharapkan klien..."></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-risk">Skrining Risiko</label>
-              <textarea id="asm-risk" name="risk_screening" class="textarea" placeholder="Catatan kehati-hatian klinis / kontraindikasi..."></textarea>
-            </div>
-            <div class="field">
-              <label for="asm-rec">Rekomendasi Awal</label>
-              <textarea id="asm-rec" name="recommendation" class="textarea" placeholder="Rencana jumlah sesi, pendekatan hipnoterapi..."></textarea>
-            </div>
-            <div class="field field-span-full">
-              <label for="asm-notes">Catatan Tambahan</label>
-              <textarea id="asm-notes" name="notes" class="textarea" rows="2"></textarea>
-            </div>
-          </div>
-
-          <div class="flex-between mt-4">
-            <span class="text-xs text-muted">Data anamnesis bersifat rahasia klinis dan tidak dapat diakses Customer Service.</span>
-            <div class="flex-gap">
-              <button type="button" class="btn btn-secondary" id="btn-asm-reset">Reset Form</button>
-              <button type="submit" class="btn btn-primary" id="btn-asm-submit">Simpan Assessment</button>
-            </div>
-          </div>
-        </form>
-      </section>
-    ` : ''}
-
     <section class="card">
       <div class="card-header">
         <div>
-          <h2 class="card-title">Riwayat Assessment Awal</h2>
-          <p class="card-desc">Daftar assessment yang telah tercatat. Klik Lihat untuk membaca anamnesis lengkap.</p>
+          <h2 class="card-title">Riwayat Assessment Awal &amp; Anamnesis</h2>
+          <p class="card-desc">Daftar assessment awal yang telah tercatat. Klik Lihat untuk membaca anamnesis lengkap atau Tambah Assessment untuk input baru.</p>
         </div>
+        ${canAdd ? '<button type="button" class="btn btn-primary" id="btn-add-assessment">+ Tambah Assessment</button>' : ''}
       </div>
 
       <div class="filter-bar">
@@ -172,25 +80,15 @@ export async function renderAssessmentsPage(container, route) {
     </section>
   `;
 
-  const form = container.querySelector('#asm-form');
-  const formTitle = container.querySelector('#asm-form-title');
-  const cancelEditBtn = container.querySelector('#btn-asm-cancel-edit');
-  const submitBtn = container.querySelector('#btn-asm-submit');
   const listWrap = container.querySelector('#asm-list-wrap');
   const pagWrap = container.querySelector('#asm-pagination');
+  const addBtn = container.querySelector('#btn-add-assessment');
 
-  // Isi opsi terapis di latar belakang bila belum ada di RAM
+  // Isi opsi terapis untuk filter di latar belakang bila belum ada di RAM
   if (!isTherapist && therapistOptions.length === 0) {
     getTherapistsOptionsCached({ activeOnly: false })
       .then((opts) => {
         therapistOptions = opts;
-        const formSelect = container.querySelector('#asm-therapist');
-        if (formSelect) {
-          const prev = formSelect.value || (initialClient ? initialClient.primary_therapist_id : '');
-          formSelect.innerHTML = '<option value="">-- Pilih Terapis --</option>' +
-            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('');
-          if (prev) formSelect.value = prev;
-        }
         const filterSelect = container.querySelector('#asm-filter-trp');
         if (filterSelect) {
           const prevF = filterSelect.value;
@@ -202,75 +100,137 @@ export async function renderAssessmentsPage(container, route) {
       .catch(() => {});
   }
 
-  let clientAc = null;
-  if (form) {
+  async function openAssessmentFormModal(existing = null, prefillClient = null, triggerBtn = null) {
+    const isEdit = Boolean(existing);
+
+    if (!isTherapist && therapistOptions.length === 0) {
+      if (triggerBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
+      try {
+        therapistOptions = await getTherapistsOptionsCached({ activeOnly: false });
+      } catch (_) {
+        therapistOptions = [];
+      } finally {
+        if (triggerBtn) setButtonLoading(triggerBtn, false);
+      }
+    }
+
+    const selectedTherapistId = isEdit
+      ? (existing.therapist_id || '')
+      : (prefillClient && prefillClient.primary_therapist_id ? prefillClient.primary_therapist_id : '');
+
+    const modal = openModal({
+      title: isEdit
+        ? `Edit Assessment — ${existing.client_name} (${formatDateId(existing.assessment_date)})`
+        : 'Input Assessment Awal & Anamnesis',
+      size: 'lg',
+      bodyHtml: `
+        <form id="asm-form" novalidate>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>Klien <span class="req-star">*</span></label>
+              <div id="asm-client-ac"></div>
+            </div>
+            ${!isTherapist ? `
+              <div class="field">
+                <label for="asm-therapist">Terapis <span class="req-star">*</span></label>
+                <select id="asm-therapist" name="therapist_id" class="select" required>
+                  <option value="">-- Pilih Terapis --</option>
+                  ${therapistOptions.map((t) => `
+                    <option value="${esc(t.therapist_id)}" ${selectedTherapistId === t.therapist_id ? 'selected' : ''}>
+                      ${esc(t.full_name)} (${esc(t.code)})
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+            ` : `
+              <div class="field">
+                <label>Terapis</label>
+                <input class="input" type="text" value="${esc(actor.full_name)} (Otomatis)" disabled>
+              </div>
+            `}
+            <div class="field">
+              <label for="asm-date">Tanggal Assessment <span class="req-star">*</span></label>
+              <input id="asm-date" name="assessment_date" class="input" type="date"
+                value="${esc(isEdit ? (existing.assessment_date || todayInputDate()) : todayInputDate())}" required>
+            </div>
+          </div>
+
+          <div class="form-grid form-grid-2 mt-4">
+            <div class="field field-span-full">
+              <label for="asm-main">Keluhan Utama <span class="req-star">*</span></label>
+              <textarea id="asm-main" name="main_complaint" class="textarea textarea-clinical"
+                placeholder="Tuliskan keluhan utama klien secara menyeluruh..." required>${esc(isEdit ? existing.main_complaint : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-history">Riwayat Keluhan</label>
+              <textarea id="asm-history" name="complaint_history" class="textarea"
+                placeholder="Sejak kapan, perkembangan gejala...">${esc(isEdit ? existing.complaint_history : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-triggers">Pemicu (Triggers)</label>
+              <textarea id="asm-triggers" name="triggers" class="textarea"
+                placeholder="Situasi, pola pikir, atau kejadian pemicu...">${esc(isEdit ? existing.triggers : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-med">Riwayat Medis / Psikologis</label>
+              <textarea id="asm-med" name="medical_history" class="textarea"
+                placeholder="Riwayat pengobatan, konsultasi sebelumnya...">${esc(isEdit ? existing.medical_history : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-goals">Tujuan Terapi</label>
+              <textarea id="asm-goals" name="therapy_goals" class="textarea"
+                placeholder="Target perubahan yang diharapkan klien...">${esc(isEdit ? existing.therapy_goals : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-risk">Skrining Risiko</label>
+              <textarea id="asm-risk" name="risk_screening" class="textarea"
+                placeholder="Catatan kehati-hatian klinis / kontraindikasi...">${esc(isEdit ? existing.risk_screening : '')}</textarea>
+            </div>
+            <div class="field">
+              <label for="asm-rec">Rekomendasi Awal</label>
+              <textarea id="asm-rec" name="recommendation" class="textarea"
+                placeholder="Rencana jumlah sesi, pendekatan hipnoterapi...">${esc(isEdit ? existing.recommendation : '')}</textarea>
+            </div>
+            <div class="field field-span-full">
+              <label for="asm-notes">Catatan Tambahan</label>
+              <textarea id="asm-notes" name="notes" class="textarea" rows="2">${esc(isEdit ? existing.notes : '')}</textarea>
+            </div>
+          </div>
+
+          <p class="text-xs text-muted mt-4" style="margin-bottom:0;">
+            Data anamnesis bersifat rahasia klinis dan tidak dapat diakses oleh Customer Service.
+          </p>
+        </form>
+      `,
+      footerHtml: `
+        <button type="button" class="btn btn-secondary" data-modal-close>Batal</button>
+        <button type="submit" form="asm-form" class="btn btn-primary" id="btn-asm-submit">
+          ${isEdit ? 'Perbarui Assessment' : 'Simpan Assessment'}
+        </button>
+      `
+    });
+
+    const form = modal.querySelector('#asm-form');
+    const submitBtn = modal.querySelector('#btn-asm-submit');
+
     form.querySelectorAll('textarea').forEach((ta) => autoResizeTextarea(ta));
-    clientAc = mountClientAutocomplete(container.querySelector('#asm-client-ac'), {
+
+    const clientAc = mountClientAutocomplete(modal.querySelector('#asm-client-ac'), {
       inputName: 'client_id',
-      initialClient,
+      initialClient: isEdit
+        ? { client_id: existing.client_id, full_name: existing.client_name, client_code: existing.client_code }
+        : prefillClient,
       onSelect: (client) => {
         if (!isTherapist && form.therapist_id && !form.therapist_id.value && client.primary_therapist_id) {
           form.therapist_id.value = client.primary_therapist_id;
         }
       }
     });
-    if (initialClient && !isTherapist && form.therapist_id && initialClient.primary_therapist_id) {
-      form.therapist_id.value = initialClient.primary_therapist_id;
+
+    if (isEdit) {
+      const acInput = modal.querySelector('[data-ac-input]');
+      if (acInput) acInput.disabled = true;
     }
-  }
-
-  function resetFormToCreate() {
-    if (!form) return;
-    editingRecord = null;
-    clearFieldErrors(form);
-    form.reset();
-    form.assessment_date.value = todayInputDate();
-    if (clientAc) clientAc.setClient(null);
-    const acInput = form.querySelector('[data-ac-input]');
-    if (acInput) acInput.disabled = false;
-    formTitle.textContent = 'Input Assessment Awal & Anamnesis';
-    submitBtn.textContent = 'Simpan Assessment';
-    delete submitBtn.dataset.origHtml;
-    cancelEditBtn.hidden = true;
-  }
-
-  function populateFormForEdit(rec) {
-    if (!form) return;
-    editingRecord = rec;
-    clearFieldErrors(form);
-    if (clientAc) {
-      clientAc.setClient({
-        client_id: rec.client_id,
-        full_name: rec.client_name,
-        client_code: rec.client_code
-      });
-    }
-    const acInput = form.querySelector('[data-ac-input]');
-    if (acInput) acInput.disabled = true;
-    if (!isTherapist && form.therapist_id) {
-      form.therapist_id.value = rec.therapist_id || '';
-    }
-    form.assessment_date.value = rec.assessment_date || todayInputDate();
-    form.main_complaint.value = rec.main_complaint || '';
-    form.complaint_history.value = rec.complaint_history || '';
-    form.triggers.value = rec.triggers || '';
-    form.medical_history.value = rec.medical_history || '';
-    form.therapy_goals.value = rec.therapy_goals || '';
-    form.risk_screening.value = rec.risk_screening || '';
-    form.recommendation.value = rec.recommendation || '';
-    form.notes.value = rec.notes || '';
-    form.querySelectorAll('textarea').forEach((ta) => ta.dispatchEvent(new Event('input')));
-
-    formTitle.textContent = `Edit Assessment — ${rec.client_name} (${formatDateId(rec.assessment_date)})`;
-    submitBtn.textContent = 'Perbarui Assessment';
-    delete submitBtn.dataset.origHtml;
-    cancelEditBtn.hidden = false;
-    container.querySelector('#asm-form-card')?.scrollIntoView({ behavior: 'smooth' });
-  }
-
-  if (form) {
-    cancelEditBtn.addEventListener('click', resetFormToCreate);
-    container.querySelector('#btn-asm-reset')?.addEventListener('click', resetFormToCreate);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -300,23 +260,23 @@ export async function renderAssessmentsPage(container, route) {
       }
 
       try {
-        if (editingRecord) {
-          payload.assessment_id = editingRecord.assessment_id;
-          payload.expected_version = editingRecord.version;
+        if (isEdit) {
+          payload.assessment_id = existing.assessment_id;
+          payload.expected_version = existing.version;
           await apiCall('assessments.update', payload, { write: true });
           toast('Assessment berhasil diperbarui.', 'success');
         } else {
           await apiCall('assessments.create', payload, { write: true });
           toast('Assessment awal berhasil disimpan.', 'success');
         }
+        closeModal();
         storeInvalidate('assessments');
         storeInvalidate('clients');
-        setButtonLoading(submitBtn, false);
-        resetFormToCreate();
         loadAssessments({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
+      } finally {
         setButtonLoading(submitBtn, false);
       }
     });
@@ -392,7 +352,16 @@ export async function renderAssessmentsPage(container, route) {
 
   function renderTable(items) {
     if (items.length === 0) {
-      listWrap.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada riwayat assessment</p></div>';
+      listWrap.innerHTML = `
+        <div class="empty-state">
+          <p class="empty-state-title">Belum ada riwayat assessment</p>
+          <p class="empty-state-desc">Klik tombol Tambah Assessment di atas untuk mencatat anamnesis awal klien.</p>
+          ${canAdd ? '<button type="button" class="btn btn-primary btn-sm" id="btn-empty-add-asm">+ Tambah Assessment</button>' : ''}
+        </div>
+      `;
+      listWrap.querySelector('#btn-empty-add-asm')?.addEventListener('click', (e) => {
+        openAssessmentFormModal(null, null, e.currentTarget);
+      });
       return;
     }
 
@@ -435,7 +404,7 @@ export async function renderAssessmentsPage(container, route) {
     const byId = Object.fromEntries(items.map((a) => [a.assessment_id, a]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));
     listWrap.querySelectorAll('[data-view-asm]').forEach((b) => b.addEventListener('click', () => openAssessmentViewModal(byId[b.dataset.viewAsm])));
-    listWrap.querySelectorAll('[data-edit-asm]').forEach((b) => b.addEventListener('click', () => populateFormForEdit(byId[b.dataset.editAsm])));
+    listWrap.querySelectorAll('[data-edit-asm]').forEach((b) => b.addEventListener('click', () => openAssessmentFormModal(byId[b.dataset.editAsm], null, b)));
     listWrap.querySelectorAll('[data-del-asm]').forEach((b) => {
       b.addEventListener('click', async () => {
         const rec = byId[b.dataset.delAsm];
@@ -469,7 +438,6 @@ export async function renderAssessmentsPage(container, route) {
           storeInvalidate('assessments');
           storeInvalidate('clients');
           toast('Assessment berhasil dihapus.', 'success');
-          if (editingRecord && editingRecord.assessment_id === rec.assessment_id) resetFormToCreate();
           loadAssessments({ force: true, silent: true });
         } catch (err) {
           storeInvalidate('assessments');
@@ -479,6 +447,8 @@ export async function renderAssessmentsPage(container, route) {
       });
     });
   }
+
+  addBtn?.addEventListener('click', () => openAssessmentFormModal(null, null, addBtn));
 
   let debounce = null;
   container.querySelector('#asm-search').addEventListener('input', (e) => {
@@ -490,4 +460,19 @@ export async function renderAssessmentsPage(container, route) {
   container.querySelector('#asm-filter-to').addEventListener('change', (e) => { listState.date_to = e.target.value; listState.page = 1; loadAssessments(); });
 
   await loadAssessments({ force: Boolean(route && route.forceRefresh) });
+
+  // Auto-buka modal bila datang dari pintasan Dashboard (?new=1) atau Detail Klien (?client_id=...)
+  const wantNew = Boolean(route && route.query && (route.query.new === '1' || route.query.client_id));
+  if (wantNew && canAdd) {
+    let prefillClient = null;
+    if (route.query.client_id) {
+      try {
+        const cRes = await apiCall('clients.get', { client_id: route.query.client_id });
+        prefillClient = cRes.data && cRes.data.client;
+      } catch (_) {
+        prefillClient = null;
+      }
+    }
+    openAssessmentFormModal(null, prefillClient, addBtn);
+  }
 }

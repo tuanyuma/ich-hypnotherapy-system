@@ -1,9 +1,9 @@
 /**
  * pages/rme.js — Rekam Medis Elektronik / Sesi Terapi (F8):
- * - SWR in-memory cache + non-blocking therapist options
- * - Panel Context Reference otomatis saat klien dipilih
- * - Inline button spinner saat simpan/perbarui RME
- * - Optimistic Delete dengan animasi keluar halus + rollback otomatis bila gagal.
+ * - Tampilan utama fokus langsung ke Tabel Riwayat RME / Sesi Terapi (list-first)
+ * - Tombol "+ Catat Sesi RME" & aksi "Edit" membuka Modal XL 2-kolom (GSAP smooth):
+ *   Kiri: Form pencatatan sesi lengkap | Kanan: Panel Context Reference otomatis
+ * - SWR in-memory cache + Top Progress Bar + inline spinner + Optimistic Delete dengan rollback.
  */
 
 import { apiCall } from '../api.js';
@@ -19,6 +19,7 @@ import {
   mountClientAutocomplete,
   autoResizeTextarea,
   openModal,
+  closeModal,
   confirmDialog,
   clearFieldErrors,
   showFieldErrors,
@@ -47,20 +48,7 @@ export async function renderRmePage(container, route) {
     ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
     : [];
 
-  const prefillClientId = route && route.query ? route.query.client_id : '';
-  const prefillAptId = route && route.query ? route.query.appointment_id : '';
-  let initialClient = null;
-  if (prefillClientId) {
-    try {
-      const cRes = await apiCall('clients.get', { client_id: prefillClientId });
-      initialClient = cRes.data && cRes.data.client;
-    } catch (_) {
-      initialClient = null;
-    }
-  }
-
   const listState = { page: 1, limit: 15, q: '', therapist_id: '', session_mode: '', date_from: '', date_to: '' };
-  let editingRecord = null;
   let activeFetchId = 0;
 
   function buildCacheKey() {
@@ -68,138 +56,13 @@ export async function renderRmePage(container, route) {
   }
 
   container.innerHTML = `
-    ${canAdd || canEdit ? `
-      <div class="dashboard-split" id="rme-workspace">
-        <section class="card" id="rme-form-card">
-          <div class="card-header">
-            <div>
-              <h2 class="card-title" id="rme-form-title">Catat Sesi Terapi (RME)</h2>
-              <p class="card-desc">Nomor sesi bertambah otomatis tanpa batas saat disimpan di server.</p>
-            </div>
-            <div class="flex-gap">
-              <span id="rme-next-session-badge" class="badge badge-primary" hidden></span>
-              <button type="button" class="btn btn-secondary btn-sm" id="btn-rme-cancel-edit" hidden>Batal Edit</button>
-            </div>
-          </div>
-
-          <form id="rme-form" novalidate>
-            <div class="form-grid form-grid-2">
-              <div class="field field-span-full">
-                <label>Klien <span class="req-star">*</span></label>
-                <div id="rme-client-ac"></div>
-              </div>
-
-              ${!isTherapist ? `
-                <div class="field">
-                  <label for="rme-trp">Terapis <span class="req-star">*</span></label>
-                  <select id="rme-trp" name="therapist_id" class="select" required>
-                    <option value="">-- Pilih Terapis --</option>
-                    ${therapistOptions.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('')}
-                  </select>
-                </div>
-              ` : `
-                <div class="field">
-                  <label>Terapis</label>
-                  <input class="input" type="text" value="${esc(actor.full_name)} (Otomatis)" disabled>
-                </div>
-              `}
-
-              <div class="field" id="rme-apt-wrap">
-                <label for="rme-apt">Tautkan Jadwal Aktif (Opsional)</label>
-                <select id="rme-apt" name="appointment_id" class="select">
-                  <option value="">-- Tidak ditautkan ke jadwal --</option>
-                </select>
-                <span class="field-hint">Bila dipilih, status jadwal otomatis berubah menjadi Completed.</span>
-              </div>
-
-              <div class="field">
-                <label for="rme-date">Tanggal Sesi <span class="req-star">*</span></label>
-                <input id="rme-date" name="session_date" class="input" type="date" value="${esc(todayInputDate())}" required>
-              </div>
-
-              <div class="field">
-                <label for="rme-mode">Jenis Sesi <span class="req-star">*</span></label>
-                <select id="rme-mode" name="session_mode" class="select">
-                  <option value="OFFLINE">Offline (Tatap Muka)</option>
-                  <option value="ONLINE">Online (Video Call)</option>
-                </select>
-              </div>
-
-              <div class="field field-span-full">
-                <label for="rme-complaint">Keluhan Saat Ini <span class="req-star">*</span></label>
-                <textarea id="rme-complaint" name="chief_complaint" class="textarea textarea-clinical"
-                  placeholder="Tuliskan keluhan, kondisi emosional, atau perkembangan sejak sesi sebelumnya..." required></textarea>
-              </div>
-
-              <div class="field field-span-full">
-                <label for="rme-obs">Observasi / Subjektif</label>
-                <textarea id="rme-obs" name="observation" class="textarea"
-                  placeholder="Ekspresi, bahasa tubuh, respons awal, tingkat relaksasi..."></textarea>
-              </div>
-
-              <div class="field field-span-full">
-                <label for="rme-int">Teknik Intervensi Hipnoterapi</label>
-                <textarea id="rme-int" name="intervention" class="textarea"
-                  placeholder="Induksi, deepening, teknik terapi (regresi, parts therapy, anchoring, reframing, dll.)..."></textarea>
-              </div>
-
-              <div class="field">
-                <label for="rme-resp">Respons Klien</label>
-                <textarea id="rme-resp" name="client_response" class="textarea"
-                  placeholder="Respons selama dan sesudah sesi..."></textarea>
-              </div>
-
-              <div class="field">
-                <label for="rme-hw">Tugas Rumah (Homework)</label>
-                <textarea id="rme-hw" name="homework" class="textarea"
-                  placeholder="Latihan self-hypnosis, jurnal, atau afirmasi..."></textarea>
-              </div>
-
-              <div class="field">
-                <label for="rme-next">Fokus Sesi Berikutnya</label>
-                <textarea id="rme-next" name="next_focus" class="textarea"
-                  placeholder="Agenda atau area yang perlu dilanjutkan di sesi mendatang..."></textarea>
-              </div>
-
-              <div class="field">
-                <label for="rme-score">Skala Kemajuan (1–10)</label>
-                <input id="rme-score" name="progress_score" class="input" type="number" min="1" max="10" placeholder="1 (awal) s.d. 10 (sangat baik)">
-                <label for="rme-notes" class="mt-2">Catatan Tambahan</label>
-                <textarea id="rme-notes" name="notes" class="textarea" rows="2"></textarea>
-              </div>
-            </div>
-
-            <div class="flex-between mt-4">
-              <span class="text-xs text-muted">Catatan klinis dilindungi server &amp; tidak dicatat mentah ke Audit Log.</span>
-              <div class="flex-gap">
-                <button type="button" class="btn btn-secondary" id="btn-rme-reset">Reset Form</button>
-                <button type="submit" class="btn btn-primary" id="btn-rme-submit">Simpan Sesi RME</button>
-              </div>
-            </div>
-          </form>
-        </section>
-
-        <aside class="context-panel" id="rme-context-panel" aria-live="polite">
-          <div class="flex-between">
-            <h2 class="card-title">Panel Context Reference</h2>
-            <span class="badge badge-primary">Otomatis</span>
-          </div>
-          <p class="card-desc mt-2">Pilih klien di form sebelah untuk menampilkan ringkasan Assessment awal dan 3 sesi RME terakhir secara otomatis.</p>
-          <div id="rme-context-body" class="mt-4">
-            <div class="empty-state" style="padding:20px 10px;">
-              <p class="empty-state-desc" style="margin:0;">Belum ada klien dipilih.</p>
-            </div>
-          </div>
-        </aside>
-      </div>
-    ` : ''}
-
     <section class="card">
       <div class="card-header">
         <div>
           <h2 class="card-title">Riwayat RME / Sesi Terapi</h2>
-          <p class="card-desc">Seluruh catatan sesi terapi dalam kewenangan Anda.</p>
+          <p class="card-desc">Seluruh catatan sesi terapi dalam kewenangan Anda. Klik Catat Sesi RME untuk mencatat sesi baru lengkap dengan Context Reference otomatis.</p>
         </div>
+        ${canAdd ? '<button type="button" class="btn btn-primary" id="btn-add-rme">+ Catat Sesi RME</button>' : ''}
       </div>
 
       <div class="filter-bar">
@@ -224,29 +87,15 @@ export async function renderRmePage(container, route) {
     </section>
   `;
 
-  const form = container.querySelector('#rme-form');
-  const formTitle = container.querySelector('#rme-form-title');
-  const nextBadge = container.querySelector('#rme-next-session-badge');
-  const cancelEditBtn = container.querySelector('#btn-rme-cancel-edit');
-  const submitBtn = container.querySelector('#btn-rme-submit');
-  const contextBody = container.querySelector('#rme-context-body');
-  const aptSelect = container.querySelector('#rme-apt');
-  const aptWrap = container.querySelector('#rme-apt-wrap');
   const listWrap = container.querySelector('#rme-list-wrap');
   const pagWrap = container.querySelector('#rme-pagination');
+  const addBtn = container.querySelector('#btn-add-rme');
 
-  // Isi opsi terapis di latar belakang jika belum ada di RAM
+  // Isi opsi terapis untuk filter di latar belakang bila belum ada di RAM
   if (!isTherapist && therapistOptions.length === 0) {
     getTherapistsOptionsCached({ activeOnly: false })
       .then((opts) => {
         therapistOptions = opts;
-        const formSelect = container.querySelector('#rme-trp');
-        if (formSelect) {
-          const prev = formSelect.value || (initialClient ? initialClient.primary_therapist_id : '');
-          formSelect.innerHTML = '<option value="">-- Pilih Terapis --</option>' +
-            opts.map((t) => `<option value="${esc(t.therapist_id)}">${esc(t.full_name)} (${esc(t.code)})</option>`).join('');
-          if (prev) formSelect.value = prev;
-        }
         const filterSelect = container.querySelector('#rme-filter-trp');
         if (filterSelect) {
           const prevF = filterSelect.value;
@@ -258,158 +107,263 @@ export async function renderRmePage(container, route) {
       .catch(() => {});
   }
 
-  let clientAc = null;
+  async function openRmeFormModal(existing = null, prefillClient = null, prefillAptId = '', triggerBtn = null) {
+    const isEdit = Boolean(existing);
 
-  async function loadContextReference(clientId, selectedAptId = '') {
-    if (!contextBody) return;
-    if (!clientId) {
-      if (nextBadge) nextBadge.hidden = true;
-      if (aptSelect) aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>';
-      contextBody.innerHTML = '<div class="empty-state" style="padding:20px 10px;"><p class="empty-state-desc" style="margin:0;">Belum ada klien dipilih.</p></div>';
-      return;
+    if (!isTherapist && therapistOptions.length === 0) {
+      if (triggerBtn) setButtonLoading(triggerBtn, true, 'Memuat...');
+      try {
+        therapistOptions = await getTherapistsOptionsCached({ activeOnly: false });
+      } catch (_) {
+        therapistOptions = [];
+      } finally {
+        if (triggerBtn) setButtonLoading(triggerBtn, false);
+      }
     }
 
-    contextBody.innerHTML = '<div class="skeleton" style="height:120px;width:100%;"></div>';
-    try {
-      const res = await apiCall('rme.context', { client_id: clientId });
-      const ctx = res.data;
+    const selectedTherapistId = isEdit
+      ? (existing.therapist_id || '')
+      : (prefillClient && prefillClient.primary_therapist_id ? prefillClient.primary_therapist_id : '');
 
-      if (nextBadge && !editingRecord) {
-        nextBadge.textContent = `Sesi Berikutnya: #${ctx.next_session_no}`;
-        nextBadge.hidden = false;
-      }
-
-      if (!isTherapist && form && form.therapist_id && !form.therapist_id.value && ctx.client.primary_therapist_id) {
-        form.therapist_id.value = ctx.client.primary_therapist_id;
-      }
-
-      if (aptSelect && !editingRecord) {
-        const openApts = ctx.open_appointments || [];
-        aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>' +
-          openApts.map((a) => `
-            <option value="${esc(a.appointment_id)}" ${selectedAptId === a.appointment_id ? 'selected' : ''}>
-              ${esc(formatDateId(a.scheduled_date))} ${esc(a.start_time)} WIB (${esc(a.session_mode)})
-            </option>
-          `).join('');
-      }
-
-      const asm = ctx.latest_assessment;
-      const sessions = ctx.recent_sessions || [];
-
-      contextBody.innerHTML = `
-        <div class="context-item">
-          <div class="flex-between">
-            <strong>${esc(ctx.client.full_name)}</strong>
-            ${statusBadge('client', ctx.client.status)}
-          </div>
-          <div class="text-xs text-muted mt-2 font-mono">
-            ${esc(ctx.client.client_code)} • Total ${esc(ctx.client.total_sessions || 0)} sesi • Terakhir: ${esc(formatDateId(ctx.client.last_session_at))}
-          </div>
-        </div>
-
-        <div class="context-item">
-          <div class="flex-between">
-            <strong>Assessment Awal Terbaru</strong>
-            ${asm ? `<span class="text-xs text-muted">${esc(formatDateId(asm.assessment_date))}</span>` : ''}
-          </div>
-          ${asm ? `
-            <div class="text-sm mt-2"><strong>Keluhan:</strong> ${esc(asm.main_complaint)}</div>
-            ${asm.triggers ? `<div class="text-xs text-muted mt-2"><strong>Pemicu:</strong> ${esc(asm.triggers)}</div>` : ''}
-            ${asm.therapy_goals ? `<div class="text-xs text-muted mt-2"><strong>Tujuan:</strong> ${esc(asm.therapy_goals)}</div>` : ''}
-            ${asm.risk_screening ? `<div class="text-xs mt-2" style="color:var(--color-danger);"><strong>Skrining Risiko:</strong> ${esc(asm.risk_screening)}</div>` : ''}
-          ` : '<p class="text-xs text-muted mt-2" style="margin-bottom:0;">Belum ada assessment awal tercatat.</p>'}
-        </div>
-
-        <div class="mt-4">
-          <strong class="text-sm">3 Sesi RME Terakhir</strong>
-          ${sessions.length === 0 ? `
-            <div class="context-item text-xs text-muted">Belum ada sesi terapi sebelumnya. Ini akan menjadi Sesi #1.</div>
-          ` : sessions.map((s) => `
-            <div class="context-item">
-              <div class="flex-between">
-                <span class="badge badge-primary">Sesi #${esc(s.session_no)}</span>
-                <span class="text-xs text-muted">${esc(formatDateId(s.session_date))} ${s.progress_score ? `• Skor ${esc(s.progress_score)}/10` : ''}</span>
-              </div>
-              <div class="text-xs mt-2"><strong>Keluhan:</strong> ${esc(s.chief_complaint)}</div>
-              ${s.intervention ? `<div class="text-xs text-muted mt-2"><strong>Intervensi:</strong> ${esc(s.intervention)}</div>` : ''}
-              ${s.homework ? `<div class="text-xs text-muted mt-2"><strong>PR:</strong> ${esc(s.homework)}</div>` : ''}
-              ${s.next_focus ? `<div class="text-xs mt-2" style="color:var(--color-primary);"><strong>Fokus Sesi Berikutnya:</strong> ${esc(s.next_focus)}</div>` : ''}
+    const modal = openModal({
+      title: isEdit ? `Edit RME Sesi #${existing.session_no} — ${existing.client_name}` : 'Catat Sesi Terapi (RME)',
+      size: 'xl',
+      bodyHtml: `
+        <div class="rme-modal-split">
+          <form id="rme-form" novalidate>
+            <div class="flex-between mb-3">
+              <span class="text-xs text-muted">Nomor sesi bertambah otomatis tanpa batas saat disimpan di server.</span>
+              <span id="rme-next-session-badge" class="badge badge-primary" ${isEdit ? '' : 'hidden'}>
+                ${isEdit ? `Mengedit Sesi #${esc(existing.session_no)}` : ''}
+              </span>
             </div>
-          `).join('')}
-        </div>
-      `;
-    } catch (err) {
-      contextBody.innerHTML = `<div class="context-item text-xs" style="color:var(--color-danger);">Gagal memuat context: ${esc(err.message)}</div>`;
-    }
-  }
 
-  if (form) {
+            <div class="form-grid form-grid-2">
+              <div class="field field-span-full">
+                <label>Klien <span class="req-star">*</span></label>
+                <div id="rme-client-ac"></div>
+              </div>
+
+              ${!isTherapist ? `
+                <div class="field">
+                  <label for="rme-trp">Terapis <span class="req-star">*</span></label>
+                  <select id="rme-trp" name="therapist_id" class="select" required>
+                    <option value="">-- Pilih Terapis --</option>
+                    ${therapistOptions.map((t) => `
+                      <option value="${esc(t.therapist_id)}" ${selectedTherapistId === t.therapist_id ? 'selected' : ''}>
+                        ${esc(t.full_name)} (${esc(t.code)})
+                      </option>
+                    `).join('')}
+                  </select>
+                </div>
+              ` : `
+                <div class="field">
+                  <label>Terapis</label>
+                  <input class="input" type="text" value="${esc(actor.full_name)} (Otomatis)" disabled>
+                </div>
+              `}
+
+              <div class="field" id="rme-apt-wrap" ${isEdit ? 'hidden' : ''}>
+                <label for="rme-apt">Tautkan Jadwal Aktif (Opsional)</label>
+                <select id="rme-apt" name="appointment_id" class="select">
+                  <option value="">-- Tidak ditautkan ke jadwal --</option>
+                </select>
+                <span class="field-hint">Bila dipilih, status jadwal otomatis berubah menjadi Completed.</span>
+              </div>
+
+              <div class="field">
+                <label for="rme-date">Tanggal Sesi <span class="req-star">*</span></label>
+                <input id="rme-date" name="session_date" class="input" type="date"
+                  value="${esc(isEdit ? (existing.session_date || todayInputDate()) : todayInputDate())}" required>
+              </div>
+
+              <div class="field">
+                <label for="rme-mode">Jenis Sesi <span class="req-star">*</span></label>
+                <select id="rme-mode" name="session_mode" class="select">
+                  <option value="OFFLINE" ${(!isEdit || existing.session_mode === 'OFFLINE') ? 'selected' : ''}>Offline (Tatap Muka)</option>
+                  <option value="ONLINE" ${isEdit && existing.session_mode === 'ONLINE' ? 'selected' : ''}>Online (Video Call)</option>
+                </select>
+              </div>
+
+              <div class="field field-span-full">
+                <label for="rme-complaint">Keluhan Saat Ini <span class="req-star">*</span></label>
+                <textarea id="rme-complaint" name="chief_complaint" class="textarea textarea-clinical"
+                  placeholder="Tuliskan keluhan, kondisi emosional, atau perkembangan sejak sesi sebelumnya..." required>${esc(isEdit ? existing.chief_complaint : '')}</textarea>
+              </div>
+
+              <div class="field field-span-full">
+                <label for="rme-obs">Observasi / Subjektif</label>
+                <textarea id="rme-obs" name="observation" class="textarea"
+                  placeholder="Ekspresi, bahasa tubuh, respons awal, tingkat relaksasi...">${esc(isEdit ? existing.observation : '')}</textarea>
+              </div>
+
+              <div class="field field-span-full">
+                <label for="rme-int">Teknik Intervensi Hipnoterapi</label>
+                <textarea id="rme-int" name="intervention" class="textarea"
+                  placeholder="Induksi, deepening, teknik terapi (regresi, parts therapy, anchoring, reframing, dll.)...">${esc(isEdit ? existing.intervention : '')}</textarea>
+              </div>
+
+              <div class="field">
+                <label for="rme-resp">Respons Klien</label>
+                <textarea id="rme-resp" name="client_response" class="textarea"
+                  placeholder="Respons selama dan sesudah sesi...">${esc(isEdit ? existing.client_response : '')}</textarea>
+              </div>
+
+              <div class="field">
+                <label for="rme-hw">Tugas Rumah (Homework)</label>
+                <textarea id="rme-hw" name="homework" class="textarea"
+                  placeholder="Latihan self-hypnosis, jurnal, atau afirmasi...">${esc(isEdit ? existing.homework : '')}</textarea>
+              </div>
+
+              <div class="field">
+                <label for="rme-next">Fokus Sesi Berikutnya</label>
+                <textarea id="rme-next" name="next_focus" class="textarea"
+                  placeholder="Agenda atau area yang perlu dilanjutkan di sesi mendatang...">${esc(isEdit ? existing.next_focus : '')}</textarea>
+              </div>
+
+              <div class="field">
+                <label for="rme-score">Skala Kemajuan (1–10)</label>
+                <input id="rme-score" name="progress_score" class="input" type="number" min="1" max="10"
+                  value="${esc(isEdit && existing.progress_score ? existing.progress_score : '')}"
+                  placeholder="1 (awal) s.d. 10 (sangat baik)">
+                <label for="rme-notes" class="mt-2">Catatan Tambahan</label>
+                <textarea id="rme-notes" name="notes" class="textarea" rows="2">${esc(isEdit ? existing.notes : '')}</textarea>
+              </div>
+            </div>
+
+            <p class="text-xs text-muted mt-4" style="margin-bottom:0;">
+              Catatan klinis dilindungi server &amp; tidak dicatat mentah ke Audit Log.
+            </p>
+          </form>
+
+          <aside class="context-panel" id="rme-context-panel" aria-live="polite">
+            <div class="flex-between">
+              <h3 class="card-title">Panel Context Reference</h3>
+              <span class="badge badge-primary">Otomatis</span>
+            </div>
+            <p class="card-desc mt-2">Pilih klien di sebelah kiri untuk menampilkan ringkasan Assessment awal dan 3 sesi RME terakhir secara otomatis.</p>
+            <div id="rme-context-body" class="mt-4">
+              <div class="empty-state" style="padding:20px 10px;">
+                <p class="empty-state-desc" style="margin:0;">Belum ada klien dipilih.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
+      `,
+      footerHtml: `
+        <button type="button" class="btn btn-secondary" data-modal-close>Batal</button>
+        <button type="submit" form="rme-form" class="btn btn-primary" id="btn-rme-submit">
+          ${isEdit ? 'Perbarui RME' : 'Simpan Sesi RME'}
+        </button>
+      `
+    });
+
+    const form = modal.querySelector('#rme-form');
+    const nextBadge = modal.querySelector('#rme-next-session-badge');
+    const submitBtn = modal.querySelector('#btn-rme-submit');
+    const contextBody = modal.querySelector('#rme-context-body');
+    const aptSelect = modal.querySelector('#rme-apt');
+
+    async function loadContextReference(clientId, selectedAptId = '') {
+      if (!contextBody) return;
+      if (!clientId) {
+        if (nextBadge && !isEdit) nextBadge.hidden = true;
+        if (aptSelect) aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>';
+        contextBody.innerHTML = '<div class="empty-state" style="padding:20px 10px;"><p class="empty-state-desc" style="margin:0;">Belum ada klien dipilih.</p></div>';
+        return;
+      }
+
+      contextBody.innerHTML = '<div class="skeleton" style="height:120px;width:100%;"></div>';
+      try {
+        const res = await apiCall('rme.context', { client_id: clientId });
+        const ctx = res.data;
+
+        if (nextBadge && !isEdit) {
+          nextBadge.textContent = `Sesi Berikutnya: #${ctx.next_session_no}`;
+          nextBadge.hidden = false;
+        }
+
+        if (!isTherapist && form && form.therapist_id && !form.therapist_id.value && ctx.client.primary_therapist_id) {
+          form.therapist_id.value = ctx.client.primary_therapist_id;
+        }
+
+        if (aptSelect && !isEdit) {
+          const openApts = ctx.open_appointments || [];
+          aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>' +
+            openApts.map((a) => `
+              <option value="${esc(a.appointment_id)}" ${selectedAptId === a.appointment_id ? 'selected' : ''}>
+                ${esc(formatDateId(a.scheduled_date))} ${esc(a.start_time)} WIB (${esc(a.session_mode)})
+              </option>
+            `).join('');
+        }
+
+        const asm = ctx.latest_assessment;
+        const sessions = ctx.recent_sessions || [];
+
+        contextBody.innerHTML = `
+          <div class="context-item">
+            <div class="flex-between">
+              <strong>${esc(ctx.client.full_name)}</strong>
+              ${statusBadge('client', ctx.client.status)}
+            </div>
+            <div class="text-xs text-muted mt-2 font-mono">
+              ${esc(ctx.client.client_code)} • Total ${esc(ctx.client.total_sessions || 0)} sesi • Terakhir: ${esc(formatDateId(ctx.client.last_session_at))}
+            </div>
+          </div>
+
+          <div class="context-item">
+            <div class="flex-between">
+              <strong>Assessment Awal Terbaru</strong>
+              ${asm ? `<span class="text-xs text-muted">${esc(formatDateId(asm.assessment_date))}</span>` : ''}
+            </div>
+            ${asm ? `
+              <div class="text-sm mt-2"><strong>Keluhan:</strong> ${esc(asm.main_complaint)}</div>
+              ${asm.triggers ? `<div class="text-xs text-muted mt-2"><strong>Pemicu:</strong> ${esc(asm.triggers)}</div>` : ''}
+              ${asm.therapy_goals ? `<div class="text-xs text-muted mt-2"><strong>Tujuan:</strong> ${esc(asm.therapy_goals)}</div>` : ''}
+              ${asm.risk_screening ? `<div class="text-xs mt-2" style="color:var(--color-danger);"><strong>Skrining Risiko:</strong> ${esc(asm.risk_screening)}</div>` : ''}
+            ` : '<p class="text-xs text-muted mt-2" style="margin-bottom:0;">Belum ada assessment awal tercatat.</p>'}
+          </div>
+
+          <div class="mt-4">
+            <strong class="text-sm">3 Sesi RME Terakhir</strong>
+            ${sessions.length === 0 ? `
+              <div class="context-item text-xs text-muted">Belum ada sesi terapi sebelumnya. Ini akan menjadi Sesi #1.</div>
+            ` : sessions.map((s) => `
+              <div class="context-item">
+                <div class="flex-between">
+                  <span class="badge badge-primary">Sesi #${esc(s.session_no)}</span>
+                  <span class="text-xs text-muted">${esc(formatDateId(s.session_date))} ${s.progress_score ? `• Skor ${esc(s.progress_score)}/10` : ''}</span>
+                </div>
+                <div class="text-xs mt-2"><strong>Keluhan:</strong> ${esc(s.chief_complaint)}</div>
+                ${s.intervention ? `<div class="text-xs text-muted mt-2"><strong>Intervensi:</strong> ${esc(s.intervention)}</div>` : ''}
+                ${s.homework ? `<div class="text-xs text-muted mt-2"><strong>PR:</strong> ${esc(s.homework)}</div>` : ''}
+                ${s.next_focus ? `<div class="text-xs mt-2" style="color:var(--color-primary);"><strong>Fokus Sesi Berikutnya:</strong> ${esc(s.next_focus)}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } catch (err) {
+        contextBody.innerHTML = `<div class="context-item text-xs" style="color:var(--color-danger);">Gagal memuat context: ${esc(err.message)}</div>`;
+      }
+    }
+
     form.querySelectorAll('textarea').forEach((ta) => autoResizeTextarea(ta));
-    clientAc = mountClientAutocomplete(container.querySelector('#rme-client-ac'), {
+
+    const clientAc = mountClientAutocomplete(modal.querySelector('#rme-client-ac'), {
       inputName: 'client_id',
-      initialClient,
+      initialClient: isEdit
+        ? { client_id: existing.client_id, full_name: existing.client_name, client_code: existing.client_code }
+        : prefillClient,
       onSelect: (client) => loadContextReference(client.client_id)
     });
-    if (initialClient) {
-      loadContextReference(initialClient.client_id, prefillAptId);
+
+    if (isEdit) {
+      const acInput = modal.querySelector('[data-ac-input]');
+      if (acInput) acInput.disabled = true;
+      loadContextReference(existing.client_id);
+    } else if (prefillClient) {
+      loadContextReference(prefillClient.client_id, prefillAptId);
     }
-  }
-
-  function resetFormToCreate() {
-    if (!form) return;
-    editingRecord = null;
-    clearFieldErrors(form);
-    form.reset();
-    form.session_date.value = todayInputDate();
-    if (clientAc) clientAc.setClient(null);
-    const acInput = form.querySelector('[data-ac-input]');
-    if (acInput) acInput.disabled = false;
-    if (aptWrap) aptWrap.hidden = false;
-    formTitle.textContent = 'Catat Sesi Terapi (RME)';
-    submitBtn.textContent = 'Simpan Sesi RME';
-    delete submitBtn.dataset.origHtml;
-    cancelEditBtn.hidden = true;
-    loadContextReference('');
-  }
-
-  function populateFormForEdit(rec) {
-    if (!form) return;
-    editingRecord = rec;
-    clearFieldErrors(form);
-    if (clientAc) {
-      clientAc.setClient({ client_id: rec.client_id, full_name: rec.client_name, client_code: rec.client_code });
-    }
-    const acInput = form.querySelector('[data-ac-input]');
-    if (acInput) acInput.disabled = true;
-    if (aptWrap) aptWrap.hidden = true;
-    if (!isTherapist && form.therapist_id) form.therapist_id.value = rec.therapist_id || '';
-    form.session_date.value = rec.session_date || todayInputDate();
-    form.session_mode.value = rec.session_mode || 'OFFLINE';
-    form.chief_complaint.value = rec.chief_complaint || '';
-    form.observation.value = rec.observation || '';
-    form.intervention.value = rec.intervention || '';
-    form.client_response.value = rec.client_response || '';
-    form.homework.value = rec.homework || '';
-    form.next_focus.value = rec.next_focus || '';
-    form.progress_score.value = rec.progress_score || '';
-    form.notes.value = rec.notes || '';
-    form.querySelectorAll('textarea').forEach((ta) => ta.dispatchEvent(new Event('input')));
-
-    formTitle.textContent = `Edit RME Sesi #${rec.session_no} — ${rec.client_name}`;
-    if (nextBadge) {
-      nextBadge.textContent = `Mengedit Sesi #${rec.session_no}`;
-      nextBadge.hidden = false;
-    }
-    submitBtn.textContent = 'Perbarui RME';
-    delete submitBtn.dataset.origHtml;
-    cancelEditBtn.hidden = false;
-    loadContextReference(rec.client_id);
-    container.querySelector('#rme-form-card')?.scrollIntoView({ behavior: 'smooth' });
-  }
-
-  if (form) {
-    cancelEditBtn.addEventListener('click', resetFormToCreate);
-    container.querySelector('#btn-rme-reset')?.addEventListener('click', resetFormToCreate);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -440,9 +394,9 @@ export async function renderRmePage(container, route) {
       }
 
       try {
-        if (editingRecord) {
-          payload.rme_id = editingRecord.rme_id;
-          payload.expected_version = editingRecord.version;
+        if (isEdit) {
+          payload.rme_id = existing.rme_id;
+          payload.expected_version = existing.version;
           await apiCall('rme.update', payload, { write: true });
           toast('Catatan RME berhasil diperbarui.', 'success');
         } else {
@@ -452,16 +406,16 @@ export async function renderRmePage(container, route) {
           const res = await apiCall('rme.create', payload, { write: true });
           toast(`RME Sesi #${res.data.rme.session_no} berhasil disimpan.`, 'success');
         }
+        closeModal();
         storeInvalidate('rme');
         storeInvalidate('clients');
         storeInvalidate('appointments');
         storeInvalidate('dashboard');
-        setButtonLoading(submitBtn, false);
-        resetFormToCreate();
         loadRmeList({ force: true, silent: true });
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields);
         toast(err.message, 'danger');
+      } finally {
         setButtonLoading(submitBtn, false);
       }
     });
@@ -538,7 +492,16 @@ export async function renderRmePage(container, route) {
 
   function renderTable(items) {
     if (items.length === 0) {
-      listWrap.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada catatan RME</p></div>';
+      listWrap.innerHTML = `
+        <div class="empty-state">
+          <p class="empty-state-title">Belum ada catatan RME</p>
+          <p class="empty-state-desc">Klik tombol Catat Sesi RME untuk mulai mendokumentasikan sesi terapi klien.</p>
+          ${canAdd ? '<button type="button" class="btn btn-primary btn-sm" id="btn-empty-add-rme">+ Catat Sesi RME</button>' : ''}
+        </div>
+      `;
+      listWrap.querySelector('#btn-empty-add-rme')?.addEventListener('click', (e) => {
+        openRmeFormModal(null, null, '', e.currentTarget);
+      });
       return;
     }
 
@@ -589,7 +552,7 @@ export async function renderRmePage(container, route) {
     const byId = Object.fromEntries(items.map((r) => [r.rme_id, r]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));
     listWrap.querySelectorAll('[data-view-rme]').forEach((b) => b.addEventListener('click', () => openRmeViewModal(byId[b.dataset.viewRme])));
-    listWrap.querySelectorAll('[data-edit-rme]').forEach((b) => b.addEventListener('click', () => populateFormForEdit(byId[b.dataset.editRme])));
+    listWrap.querySelectorAll('[data-edit-rme]').forEach((b) => b.addEventListener('click', () => openRmeFormModal(byId[b.dataset.editRme], null, '', b)));
     listWrap.querySelectorAll('[data-del-rme]').forEach((b) => {
       b.addEventListener('click', async () => {
         const rec = byId[b.dataset.delRme];
@@ -624,7 +587,6 @@ export async function renderRmePage(container, route) {
           storeInvalidate('clients');
           storeInvalidate('dashboard');
           toast(`Catatan RME Sesi #${rec.session_no} berhasil dihapus.`, 'success');
-          if (editingRecord && editingRecord.rme_id === rec.rme_id) resetFormToCreate();
           loadRmeList({ force: true, silent: true });
         } catch (err) {
           storeInvalidate('rme');
@@ -634,6 +596,8 @@ export async function renderRmePage(container, route) {
       });
     });
   }
+
+  addBtn?.addEventListener('click', () => openRmeFormModal(null, null, '', addBtn));
 
   let debounce = null;
   container.querySelector('#rme-search').addEventListener('input', (e) => {
@@ -646,4 +610,21 @@ export async function renderRmePage(container, route) {
   container.querySelector('#rme-filter-to').addEventListener('change', (e) => { listState.date_to = e.target.value; listState.page = 1; loadRmeList(); });
 
   await loadRmeList({ force: Boolean(route && route.forceRefresh) });
+
+  // Auto-buka modal bila datang dari Dashboard (?new=1), Detail Klien (?client_id=...), atau Jadwal (+ RME)
+  const prefillClientId = route && route.query ? route.query.client_id : '';
+  const prefillAptId = route && route.query ? (route.query.appointment_id || '') : '';
+  const wantNew = Boolean(route && route.query && (route.query.new === '1' || prefillClientId));
+  if (wantNew && canAdd) {
+    let prefillClient = null;
+    if (prefillClientId) {
+      try {
+        const cRes = await apiCall('clients.get', { client_id: prefillClientId });
+        prefillClient = cRes.data && cRes.data.client;
+      } catch (_) {
+        prefillClient = null;
+      }
+    }
+    openRmeFormModal(null, prefillClient, prefillAptId, addBtn);
+  }
 }

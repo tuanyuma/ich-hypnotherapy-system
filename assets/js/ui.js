@@ -255,7 +255,7 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', closa
   }
   lastFocusedEl = document.activeElement;
 
-  const sizeClass = size === 'lg' ? 'modal-lg' : '';
+  const sizeClass = size === 'xl' ? 'modal-xl' : size === 'lg' ? 'modal-lg' : '';
   root.innerHTML = `
     <div class="modal-panel ${sizeClass}">
       <div class="modal-header">

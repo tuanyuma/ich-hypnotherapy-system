@@ -12,10 +12,13 @@ import { navigate } from '../router.js';
 import {
   esc,
   formatDateId,
+  formatTimeId,
   todayInputDate,
   statusBadge,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   mountClientAutocomplete,
   autoResizeTextarea,
   openModal,
@@ -48,11 +51,20 @@ export async function renderRmePage(container, route) {
     ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
     : [];
 
-  const listState = { page: 1, limit: 15, q: '', therapist_id: '', session_mode: '', date_from: '', date_to: '' };
+  const listState = {
+    page: 1,
+    limit: 10,
+    q: '',
+    therapist_id: '',
+    session_mode: '',
+    date_from: '',
+    date_to: '',
+    sort: { field: 'rme_code', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    return `rme:list:p${listState.page}:q=${listState.q}:t=${listState.therapist_id}:m=${listState.session_mode}:f=${listState.date_from}:to=${listState.date_to}`;
+    return `rme:list:p${listState.page}:l${listState.limit}:q=${listState.q}:t=${listState.therapist_id}:m=${listState.session_mode}:f=${listState.date_from}:to=${listState.date_to}:sf=${listState.sort.field}:${listState.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -131,12 +143,17 @@ export async function renderRmePage(container, route) {
       bodyHtml: `
         <div class="rme-modal-split">
           <form id="rme-form" novalidate>
-            <div class="flex-between mb-3">
-              <span class="text-xs text-muted">Nomor sesi bertambah otomatis tanpa batas saat disimpan di server.</span>
-              <span id="rme-next-session-badge" class="badge badge-primary" ${isEdit ? '' : 'hidden'}>
-                ${isEdit ? `Mengedit Sesi #${esc(existing.session_no)}` : ''}
-              </span>
-            </div>
+            ${isEdit ? `
+              <div class="context-item flex-between mb-3 text-sm">
+                <div><strong>ID Sesi:</strong> <span class="code-chip">${esc(existing.rme_code || existing.rme_id)}</span></div>
+                <div><strong>ID Klien:</strong> <span class="code-chip">${esc(existing.client_code)}</span> • <span class="session-chip">Sesi ke-${esc(existing.session_no)}</span></div>
+              </div>
+            ` : `
+              <div class="flex-between mb-3">
+                <span class="text-xs text-muted">Nomor sesi bertambah otomatis tanpa batas saat disimpan di server.</span>
+                <span id="rme-next-session-badge" class="session-chip" hidden></span>
+              </div>
+            `}
 
             <div class="form-grid form-grid-2">
               <div class="field field-span-full">
@@ -168,7 +185,15 @@ export async function renderRmePage(container, route) {
                 <select id="rme-apt" name="appointment_id" class="select">
                   <option value="">-- Tidak ditautkan ke jadwal --</option>
                 </select>
-                <span class="field-hint">Bila dipilih, status jadwal otomatis berubah menjadi Completed.</span>
+                <span class="field-hint">Bila dipilih, status jadwal otomatis menjadi Completed.</span>
+              </div>
+
+              <div class="field" id="rme-pkg-wrap" ${isEdit ? 'hidden' : ''}>
+                <label for="rme-pkg">Potong Kuota Paket Aktif (Opsional)</label>
+                <select id="rme-pkg" name="client_package_id" class="select">
+                  <option value="">-- Sesi Reguler / Tanpa Paket --</option>
+                </select>
+                <span class="field-hint">Bila dipilih, sisa sesi paket klien otomatis berkurang 1.</span>
               </div>
 
               <div class="field">
@@ -263,12 +288,14 @@ export async function renderRmePage(container, route) {
     const submitBtn = modal.querySelector('#btn-rme-submit');
     const contextBody = modal.querySelector('#rme-context-body');
     const aptSelect = modal.querySelector('#rme-apt');
+    const pkgSelect = modal.querySelector('#rme-pkg');
 
     async function loadContextReference(clientId, selectedAptId = '') {
       if (!contextBody) return;
       if (!clientId) {
         if (nextBadge && !isEdit) nextBadge.hidden = true;
         if (aptSelect) aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>';
+        if (pkgSelect) pkgSelect.innerHTML = '<option value="">-- Sesi Reguler / Tanpa Paket --</option>';
         contextBody.innerHTML = '<div class="empty-state" style="padding:20px 10px;"><p class="empty-state-desc" style="margin:0;">Belum ada klien dipilih.</p></div>';
         return;
       }
@@ -279,7 +306,7 @@ export async function renderRmePage(container, route) {
         const ctx = res.data;
 
         if (nextBadge && !isEdit) {
-          nextBadge.textContent = `Sesi Berikutnya: #${ctx.next_session_no}`;
+          nextBadge.textContent = `Sesi ke-${ctx.next_session_no}`;
           nextBadge.hidden = false;
         }
 
@@ -292,7 +319,17 @@ export async function renderRmePage(container, route) {
           aptSelect.innerHTML = '<option value="">-- Tidak ditautkan ke jadwal --</option>' +
             openApts.map((a) => `
               <option value="${esc(a.appointment_id)}" ${selectedAptId === a.appointment_id ? 'selected' : ''}>
-                ${esc(formatDateId(a.scheduled_date))} ${esc(a.start_time)} WIB (${esc(a.session_mode)})
+                ${esc(formatDateId(a.scheduled_date))} ${esc(formatTimeId(a.start_time))} WIB (${esc(a.session_mode)})
+              </option>
+            `).join('');
+        }
+
+        const activePkgs = ctx.active_packages || [];
+        if (pkgSelect && !isEdit) {
+          pkgSelect.innerHTML = '<option value="">-- Sesi Reguler / Tanpa Paket --</option>' +
+            activePkgs.map((cp, idx) => `
+              <option value="${esc(cp.client_package_id)}" ${idx === 0 ? 'selected' : ''}>
+                ${esc(cp.package_name)} — Sisa ${esc(cp.remaining_sessions)}/${esc(cp.total_sessions)} sesi (s/d ${esc(formatDateId(cp.expiry_date))})
               </option>
             `).join('');
         }
@@ -303,12 +340,19 @@ export async function renderRmePage(container, route) {
         contextBody.innerHTML = `
           <div class="context-item">
             <div class="flex-between">
-              <strong>${esc(ctx.client.full_name)}</strong>
+              <div><strong>${esc(ctx.client.full_name)}</strong> <span class="code-chip">${esc(ctx.client.client_code)}</span></div>
               ${statusBadge('client', ctx.client.status)}
             </div>
-            <div class="text-xs text-muted mt-2 font-mono">
-              ${esc(ctx.client.client_code)} • Total ${esc(ctx.client.total_sessions || 0)} sesi • Terakhir: ${esc(formatDateId(ctx.client.last_session_at))}
+            <div class="text-xs text-muted mt-2">
+              Total <strong>${esc(ctx.client.total_sessions || 0)}</strong> sesi • Terakhir: <strong>${esc(formatDateId(ctx.client.last_session_at))}</strong>
             </div>
+            ${activePkgs.length > 0 ? `
+              <div class="mt-2">
+                ${activePkgs.map((cp) => `
+                  <span class="quota-chip">Paket ${esc(cp.package_name)}: Sisa ${esc(cp.remaining_sessions)} dari ${esc(cp.total_sessions)} Sesi</span>
+                `).join(' ')}
+              </div>
+            ` : ''}
           </div>
 
           <div class="context-item">
@@ -331,7 +375,7 @@ export async function renderRmePage(container, route) {
             ` : sessions.map((s) => `
               <div class="context-item">
                 <div class="flex-between">
-                  <span class="badge badge-primary">Sesi #${esc(s.session_no)}</span>
+                  <span class="session-chip">Sesi ke-${esc(s.session_no)}</span>
                   <span class="text-xs text-muted">${esc(formatDateId(s.session_date))} ${s.progress_score ? `• Skor ${esc(s.progress_score)}/10` : ''}</span>
                 </div>
                 <div class="text-xs mt-2"><strong>Keluhan:</strong> ${esc(s.chief_complaint)}</div>
@@ -403,12 +447,16 @@ export async function renderRmePage(container, route) {
           if (aptSelect && aptSelect.value) {
             payload.appointment_id = aptSelect.value;
           }
+          if (pkgSelect && pkgSelect.value) {
+            payload.client_package_id = pkgSelect.value;
+          }
           const res = await apiCall('rme.create', payload, { write: true });
-          toast(`RME Sesi #${res.data.rme.session_no} berhasil disimpan.`, 'success');
+          toast(`RME Sesi ke-${res.data.rme.session_no} berhasil disimpan.`, 'success');
         }
         closeModal();
         storeInvalidate('rme');
         storeInvalidate('clients');
+        storeInvalidate('packages');
         storeInvalidate('appointments');
         storeInvalidate('dashboard');
         loadRmeList({ force: true, silent: true });
@@ -442,6 +490,7 @@ export async function renderRmePage(container, route) {
         page: listState.page,
         limit: listState.limit,
         q: listState.q,
+        sort: listState.sort,
         filters: {
           therapist_id: listState.therapist_id || undefined,
           session_mode: listState.session_mode || undefined,
@@ -470,12 +519,16 @@ export async function renderRmePage(container, route) {
 
   function openRmeViewModal(r) {
     openModal({
-      title: `RME Sesi #${r.session_no} — ${r.client_name}`,
+      title: `RME Sesi ke-${r.session_no} — ${r.client_name}`,
       size: 'lg',
       bodyHtml: `
-        <div class="flex-between mb-3 text-sm">
-          <span><strong>Klien:</strong> ${esc(r.client_name)} <span class="font-mono text-muted">(${esc(r.client_code)})</span></span>
-          <span>${esc(formatDateId(r.session_date))} ${statusBadge('mode', r.session_mode)} • Terapis: <strong>${esc(r.therapist_name || '-')}</strong></span>
+        <div class="context-item flex-between mb-3 text-sm">
+          <div>
+            <strong>ID Sesi:</strong> <span class="code-chip">${esc(r.rme_code || r.rme_id)}</span>
+            <span style="margin-left:8px;"><strong>Klien:</strong> ${esc(r.client_name)} <span class="code-chip">${esc(r.client_code)}</span></span>
+            <span style="margin-left:6px;" class="session-chip">Sesi ke-${esc(r.session_no)}</span>
+          </div>
+          <div>${esc(formatDateId(r.session_date))} ${statusBadge('mode', r.session_mode)} • Terapis: <strong>${esc(r.therapist_name || '-')}</strong></div>
         </div>
         ${r.progress_score ? `<div class="mb-3"><span class="badge badge-success">Skala Kemajuan: ${esc(r.progress_score)} / 10</span></div>` : ''}
         <div class="context-item"><strong>Keluhan Saat Ini</strong><div class="text-sm mt-2" style="white-space:pre-wrap;">${esc(r.chief_complaint || '-')}</div></div>
@@ -510,8 +563,10 @@ export async function renderRmePage(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Sesi &amp; Tanggal</th>
+              ${sortableTh('ID Sesi', 'rme_code', listState.sort)}
               <th>Klien</th>
+              <th>Sesi ke-</th>
+              ${sortableTh('Tanggal', 'session_date', listState.sort)}
               <th>Terapis</th>
               <th>Mode</th>
               <th>Ringkasan Keluhan</th>
@@ -521,14 +576,13 @@ export async function renderRmePage(container, route) {
           <tbody>
             ${items.map((r) => `
               <tr data-row-id="${esc(r.rme_id)}">
-                <td class="font-mono text-sm">
-                  <span class="badge badge-primary">Sesi #${esc(r.session_no)}</span>
-                  <div class="text-xs text-muted mt-2">${esc(formatDateId(r.session_date))}</div>
-                </td>
+                <td><span class="code-chip">${esc(r.rme_code || r.rme_id)}</span></td>
                 <td>
                   <button type="button" class="link-btn" data-open-cln="${esc(r.client_id)}">${esc(r.client_name || '-')}</button>
-                  <div class="text-xs text-muted font-mono">${esc(r.client_code || '')}</div>
+                  <div class="mt-2"><span class="code-chip">${esc(r.client_code || '')}</span></div>
                 </td>
+                <td><span class="session-chip">Sesi ke-${esc(r.session_no)}</span></td>
+                <td class="font-mono text-sm"><strong>${esc(formatDateId(r.session_date))}</strong></td>
                 <td>${esc(r.therapist_name || '-')}</td>
                 <td>
                   ${statusBadge('mode', r.session_mode)}
@@ -548,6 +602,11 @@ export async function renderRmePage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, listState.sort, () => {
+      listState.page = 1;
+      loadRmeList();
+    });
 
     const byId = Object.fromEntries(items.map((r) => [r.rme_id, r]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));

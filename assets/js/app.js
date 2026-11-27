@@ -62,6 +62,26 @@ const PAGE_LOADERS = {
     subtitle: 'Rekam medis sesi terapi dengan Context Reference otomatis',
     load: () => loadOptionalPage('./pages/rme.js', 'renderRmePage')
   },
+  packages: {
+    title: 'Paket Terapi & Kuota Sesi',
+    subtitle: 'Kelola master paket terapi, paket aktif klien, sisa sesi, dan masa berlaku',
+    load: () => loadOptionalPage('./pages/packages.js', 'renderPackagesPage')
+  },
+  payments: {
+    title: 'Pembayaran & Kas',
+    subtitle: 'Pencatatan pemasukan sesi/paket, pengeluaran operasional, dan saldo kas',
+    load: () => loadOptionalPage('./pages/payments.js', 'renderPaymentsPage')
+  },
+  commissions: {
+    title: 'Komisi / Bagi Hasil Terapis',
+    subtitle: 'Perhitungan otomatis bagi hasil terapis dan status pencairan komisi',
+    load: () => loadOptionalPage('./pages/commissions.js', 'renderCommissionsPage')
+  },
+  reports: {
+    title: 'Laporan Operasional & Keuangan',
+    subtitle: 'Rekapitulasi periode klinik, kinerja terapis, cetak PDF, dan unduh CSV',
+    load: () => loadOptionalPage('./pages/reports.js', 'renderReportsPage')
+  },
   audit: {
     title: 'Audit Log',
     subtitle: 'Rekam jejak otomatis seluruh aktivitas sistem',

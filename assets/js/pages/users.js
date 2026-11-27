@@ -1,18 +1,20 @@
 /**
- * pages/users.js — Manajemen Pengguna & Staf (F3):
- * - SWR in-memory cache + background refresh via Top Progress Bar
- * - Inline spinner di tombol +Tambah/Edit (saat muat opsi terapis unlinked),
- *   tombol simpan modal, Reset Sandi, dan Aktifkan/Nonaktifkan.
+ * pages/users.js — Manajemen Pengguna, Staf & Checklist Hak Akses per Akun:
+ * - Checklist Hak Akses interaktif per modul (tersimpan nyata ke USERS.custom_permissions di Google Sheets)
+ * - Pagination 10 data/halaman + default sort ID/terbaru DESC + klik header
+ * - Status soft-delete, reset password sementara, & tautan 1:1 THERAPIST_ID.
  */
 
 import { apiCall } from '../api.js';
-import { can, getUser, roleLabel } from '../auth.js';
+import { can, getUser, roleLabel, verifySessionWithServer } from '../auth.js';
 import {
   esc,
   statusBadge,
   formatDateTimeId,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   openModal,
   closeModal,
   confirmDialog,
@@ -29,27 +31,163 @@ import {
   getTherapistsOptionsCached
 } from '../store.js';
 
+const PERMISSION_MODULES = [
+  {
+    title: 'Data Klien',
+    items: [
+      ['clients:view', 'Lihat'],
+      ['clients:add', 'Tambah'],
+      ['clients:edit', 'Edit'],
+      ['clients:delete', 'Hapus'],
+      ['clients:export', 'Ekspor']
+    ]
+  },
+  {
+    title: 'Jadwal / Appointment',
+    items: [
+      ['appointments:view', 'Lihat'],
+      ['appointments:add', 'Tambah'],
+      ['appointments:edit', 'Edit'],
+      ['appointments:delete', 'Batalkan']
+    ]
+  },
+  {
+    title: 'Assessment Awal',
+    items: [
+      ['assessments:view', 'Lihat'],
+      ['assessments:add', 'Tambah'],
+      ['assessments:edit', 'Edit'],
+      ['assessments:delete', 'Hapus']
+    ]
+  },
+  {
+    title: 'RME / Sesi Terapi',
+    items: [
+      ['rme:view', 'Lihat'],
+      ['rme:add', 'Tambah'],
+      ['rme:edit', 'Edit'],
+      ['rme:delete', 'Hapus']
+    ]
+  },
+  {
+    title: 'Paket Terapi & Kuota',
+    items: [
+      ['packages:view', 'Lihat'],
+      ['packages:add', 'Tambah'],
+      ['packages:edit', 'Edit'],
+      ['packages:delete', 'Hapus']
+    ]
+  },
+  {
+    title: 'Pembayaran & Kas',
+    items: [
+      ['payments:view', 'Lihat'],
+      ['payments:add', 'Tambah'],
+      ['payments:edit', 'Edit'],
+      ['payments:delete', 'Hapus']
+    ]
+  },
+  {
+    title: 'Komisi / Bagi Hasil',
+    items: [
+      ['commissions:view', 'Lihat'],
+      ['commissions:add', 'Tambah'],
+      ['commissions:edit', 'Tandai Cair'],
+      ['commissions:delete', 'Hapus']
+    ]
+  },
+  {
+    title: 'Laporan Klinik',
+    items: [
+      ['reports:view', 'Lihat Laporan'],
+      ['reports:export', 'Cetak / CSV']
+    ]
+  },
+  {
+    title: 'Data Terapis',
+    items: [
+      ['therapists:view', 'Lihat'],
+      ['therapists:add', 'Tambah'],
+      ['therapists:edit', 'Edit'],
+      ['therapists:delete', 'Hapus'],
+      ['therapists:view_commission', 'Lihat Skema Komisi']
+    ]
+  },
+  {
+    title: 'Pengguna, Audit & Pengaturan',
+    items: [
+      ['users:view', 'Lihat User'],
+      ['users:add', 'Tambah User'],
+      ['users:edit', 'Edit User'],
+      ['users:delete', 'Nonaktifkan User'],
+      ['users:reset_password', 'Reset Sandi'],
+      ['audit:view', 'Lihat Audit Log'],
+      ['settings:view', 'Lihat Pengaturan']
+    ]
+  }
+];
+
+const FALLBACK_ROLE_DEFAULTS = {
+  ADMIN: [
+    'dashboard:view',
+    'users:view', 'users:add', 'users:edit', 'users:delete', 'users:reset_password',
+    'therapists:view', 'therapists:add', 'therapists:edit', 'therapists:delete', 'therapists:view_commission',
+    'clients:view', 'clients:add', 'clients:edit', 'clients:delete', 'clients:export',
+    'assessments:view', 'assessments:add', 'assessments:edit', 'assessments:delete',
+    'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'rme:view', 'rme:add', 'rme:edit', 'rme:delete',
+    'packages:view', 'packages:add', 'packages:edit', 'packages:delete',
+    'payments:view', 'payments:add', 'payments:edit', 'payments:delete',
+    'commissions:view', 'commissions:add', 'commissions:edit', 'commissions:delete',
+    'reports:view', 'reports:export',
+    'audit:view', 'settings:view'
+  ],
+  THERAPIST: [
+    'dashboard:view', 'therapists:view',
+    'clients:view', 'clients:add', 'clients:edit',
+    'assessments:view', 'assessments:add', 'assessments:edit', 'assessments:delete',
+    'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'rme:view', 'rme:add', 'rme:edit', 'rme:delete',
+    'packages:view', 'commissions:view'
+  ],
+  CUSTOMER_SERVICE: [
+    'dashboard:view', 'therapists:view',
+    'clients:view', 'clients:add', 'clients:edit',
+    'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'packages:view', 'packages:add', 'packages:edit',
+    'payments:view', 'payments:add', 'payments:edit'
+  ]
+};
+
 export async function renderUsersPage(container, route) {
   const actor = getUser();
-  const state = { page: 1, limit: 20, q: '', role: '', status: '' };
+  const state = {
+    page: 1,
+    limit: 10,
+    q: '',
+    role: '',
+    status: '',
+    sort: { field: 'created_at', dir: 'desc' }
+  };
+  let roleDefaultsMap = FALLBACK_ROLE_DEFAULTS;
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    return `users:list:p${state.page}:q=${state.q}:r=${state.role}:s=${state.status}`;
+    return `users:list:p${state.page}:l${state.limit}:q=${state.q}:r=${state.role}:s=${state.status}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
   container.innerHTML = `
     <section class="card">
       <div class="card-header">
         <div>
-          <h2 class="card-title">Daftar Akun Staf</h2>
-          <p class="card-desc">1 pengguna = 1 akun login = 1 role. Menonaktifkan akun tidak menghapus riwayat klinik.</p>
+          <h2 class="card-title">Daftar Akun Staf &amp; Hak Akses</h2>
+          <p class="card-desc">Kelola akun login, tautan terapis, dan checklist hak akses spesifik per pengguna.</p>
         </div>
         ${can('users:add') ? '<button type="button" class="btn btn-primary" id="btn-add-user">+ Tambah Pengguna</button>' : ''}
       </div>
 
       <div class="filter-bar">
-        <input type="search" id="users-search" class="input" placeholder="Cari nama, username, atau terapis...">
+        <input type="search" id="users-search" class="input" placeholder="Cari nama, username, ID, atau terapis...">
         <select id="users-filter-role" class="select" aria-label="Filter role">
           <option value="">Semua Role</option>
           <option value="OWNER">Owner</option>
@@ -94,7 +232,7 @@ export async function renderUsersPage(container, route) {
         state.page = p;
         loadUsers();
       });
-      if (storeIsFresh(key, 35000)) return;
+      if (storeIsFresh(key, 30000)) return;
     } else if (!silent) {
       listWrap.innerHTML = renderSkeletonTable(5);
     }
@@ -104,12 +242,16 @@ export async function renderUsersPage(container, route) {
         page: state.page,
         limit: state.limit,
         q: state.q,
+        sort: state.sort,
         filters: {
           role: state.role || undefined,
           status: state.status || undefined
         }
       });
       if (fetchId !== activeFetchId) return;
+      if (res.data && res.data.role_defaults) {
+        roleDefaultsMap = Object.assign({}, FALLBACK_ROLE_DEFAULTS, res.data.role_defaults);
+      }
       const items = (res.data && res.data.items) || [];
       const { changed } = storeSet(key, items, res.meta);
       if (!cached || force || changed) {
@@ -144,11 +286,12 @@ export async function renderUsersPage(container, route) {
         <table class="table">
           <thead>
             <tr>
+              ${sortableTh('ID User', 'user_id', state.sort)}
               <th>Nama &amp; Username</th>
-              <th>Role</th>
+              <th>Role &amp; Hak Akses</th>
               <th>Terapis Tertaut</th>
               <th>Status</th>
-              <th>Login Terakhir</th>
+              ${sortableTh('Login Terakhir', 'last_login_at', state.sort)}
               <th>Aksi</th>
             </tr>
           </thead>
@@ -156,13 +299,23 @@ export async function renderUsersPage(container, route) {
             ${items.map((u) => {
               const manageable = canManageRow(u);
               const isSelf = actor && actor.user_id === u.user_id;
+              const hasCustomPerms = Array.isArray(u.custom_permissions) && u.role !== 'OWNER';
+              const permCount = Array.isArray(u.effective_permissions) ? u.effective_permissions.length : 0;
               return `
                 <tr data-row-id="${esc(u.user_id)}">
+                  <td><span class="code-chip">${esc(u.user_id)}</span></td>
                   <td>
                     <div><strong>${esc(u.full_name)}</strong> ${isSelf ? '<span class="badge badge-primary">Anda</span>' : ''}</div>
                     <div class="text-xs text-muted font-mono">@${esc(u.username)}</div>
                   </td>
-                  <td><span class="badge badge-neutral">${esc(roleLabel(u.role))}</span></td>
+                  <td>
+                    <div><span class="badge badge-neutral">${esc(roleLabel(u.role))}</span></div>
+                    <div class="text-xs text-muted mt-2">
+                      ${u.role === 'OWNER'
+                        ? 'Akses Penuh Sistem'
+                        : `${permCount} izin aktif ${hasCustomPerms ? '<span class="badge badge-info" style="margin-left:4px;">Kustom</span>' : '(Default)'}`}
+                    </div>
+                  </td>
                   <td>${u.therapist_id ? `<strong>${esc(u.therapist_name || u.therapist_id)}</strong>` : '<span class="text-muted">-</span>'}</td>
                   <td>
                     ${statusBadge('user', u.status)}
@@ -172,7 +325,7 @@ export async function renderUsersPage(container, route) {
                   <td class="text-xs">${esc(formatDateTimeId(u.last_login_at))}</td>
                   <td>
                     <div class="table-actions">
-                      ${manageable && can('users:edit') ? `<button type="button" class="btn btn-secondary btn-sm" data-edit-user="${esc(u.user_id)}">Edit</button>` : ''}
+                      ${manageable && can('users:edit') ? `<button type="button" class="btn btn-secondary btn-sm" data-edit-user="${esc(u.user_id)}">Edit &amp; Akses</button>` : ''}
                       ${manageable && can('users:reset_password') ? `<button type="button" class="btn btn-soft btn-sm" data-reset-pw="${esc(u.user_id)}">Reset Sandi</button>` : ''}
                       ${manageable && !isSelf && u.status === 'ACTIVE' && can('users:delete') ? `
                         <button type="button" class="btn btn-danger-ghost btn-sm" data-status-user="${esc(u.user_id)}" data-next-status="INACTIVE">Nonaktifkan</button>
@@ -189,6 +342,11 @@ export async function renderUsersPage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, state.sort, () => {
+      state.page = 1;
+      loadUsers();
+    });
 
     const byId = Object.fromEntries(items.map((u) => [u.user_id, u]));
 
@@ -251,9 +409,15 @@ export async function renderUsersPage(container, route) {
 
     const canAssignOwner = actor && actor.role === 'OWNER';
     const currentRole = existing ? existing.role : 'CUSTOMER_SERVICE';
+    const initialPerms = new Set(
+      isEdit && Array.isArray(existing.effective_permissions)
+        ? existing.effective_permissions
+        : (roleDefaultsMap[currentRole] || FALLBACK_ROLE_DEFAULTS[currentRole] || [])
+    );
 
     const modal = openModal({
-      title: isEdit ? `Edit Pengguna — ${existing.username}` : 'Tambah Pengguna Baru',
+      title: isEdit ? `Edit Akun & Hak Akses — ${existing.username}` : 'Tambah Pengguna Baru & Hak Akses',
+      size: 'lg',
       bodyHtml: `
         <form id="user-form" novalidate>
           <div class="form-grid form-grid-2">
@@ -269,7 +433,7 @@ export async function renderUsersPage(container, route) {
                 value="${esc(existing ? existing.full_name : '')}" required>
             </div>
             <div class="field">
-              <label for="u-role">Role <span class="req-star">*</span></label>
+              <label for="u-role">Role Dasar <span class="req-star">*</span></label>
               <select id="u-role" name="role" class="select">
                 ${canAssignOwner ? `<option value="OWNER" ${currentRole === 'OWNER' ? 'selected' : ''}>Pemilik (Owner)</option>` : ''}
                 <option value="ADMIN" ${currentRole === 'ADMIN' ? 'selected' : ''}>Admin</option>
@@ -287,16 +451,45 @@ export async function renderUsersPage(container, route) {
                   </option>
                 `).join('')}
               </select>
-              <span class="field-hint">${therapistOptions.length === 0 ? 'Belum ada terapis aktif yang bebas tautan. Buat di menu Data Terapis terlebih dahulu.' : '1 Data Terapis hanya dapat tertaut ke 1 akun aktif.'}</span>
+              <span class="field-hint">${therapistOptions.length === 0 ? 'Belum ada terapis aktif yang bebas tautan.' : '1 Data Terapis hanya tertaut ke 1 akun aktif.'}</span>
             </div>
             ${!isEdit ? `
               <div class="field field-span-full">
                 <label for="u-password">Password Awal (Opsional)</label>
                 <input id="u-password" name="password" class="input" type="text" autocomplete="new-password"
                   placeholder="Kosongkan agar sistem membuatkan sandi acak kuat otomatis">
-                <span class="field-hint">Minimal 8 karakter (huruf &amp; angka). Pengguna tetap wajib ganti password saat login pertama.</span>
+                <span class="field-hint">Minimal 8 karakter (huruf &amp; angka). Pengguna wajib ganti password saat login pertama.</span>
               </div>
             ` : ''}
+          </div>
+
+          <div id="u-perm-section" class="mt-4" ${currentRole === 'OWNER' ? 'hidden' : ''}>
+            <div class="flex-between">
+              <div>
+                <strong class="text-sm">Checklist Hak Akses Modul</strong>
+                <div class="text-xs text-muted">Centang izin spesifik akun ini. Perubahan disimpan langsung ke database &amp; bertahan saat login ulang.</div>
+              </div>
+              <button type="button" class="btn btn-soft btn-sm" id="btn-reset-perm-default">Reset ke Default Role</button>
+            </div>
+            <div class="perm-grid" id="u-perm-grid">
+              ${PERMISSION_MODULES.map((mod) => `
+                <div class="perm-group-card">
+                  <div class="perm-group-title">${esc(mod.title)}</div>
+                  <div class="perm-checks-wrap">
+                    ${mod.items.map(([permKey, permLabel]) => `
+                      <label class="perm-check">
+                        <input type="checkbox" name="perm_item" value="${esc(permKey)}" ${initialPerms.has(permKey) ? 'checked' : ''}>
+                        <span>${esc(permLabel)}</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div id="u-owner-perm-note" class="context-item text-xs mt-4" ${currentRole === 'OWNER' ? '' : 'hidden'}>
+            Akun dengan role <strong>Pemilik (OWNER)</strong> otomatis memiliki seluruh hak akses penuh sistem (termasuk Edit Pengaturan &amp; Purge Audit Log).
           </div>
         </form>
       `,
@@ -309,10 +502,31 @@ export async function renderUsersPage(container, route) {
     const form = modal.querySelector('#user-form');
     const roleSelect = modal.querySelector('#u-role');
     const therapistWrap = modal.querySelector('#u-therapist-wrap');
+    const permSection = modal.querySelector('#u-perm-section');
+    const ownerNote = modal.querySelector('#u-owner-perm-note');
+    const resetPermBtn = modal.querySelector('#btn-reset-perm-default');
     const saveBtn = modal.querySelector('#btn-save-user');
 
+    function applyRoleDefaultsToCheckboxes(roleCode) {
+      const defaults = new Set(roleDefaultsMap[roleCode] || FALLBACK_ROLE_DEFAULTS[roleCode] || []);
+      form.querySelectorAll('input[name="perm_item"]').forEach((cb) => {
+        cb.checked = defaults.has(cb.value);
+      });
+    }
+
     roleSelect.addEventListener('change', () => {
-      therapistWrap.hidden = roleSelect.value !== 'THERAPIST';
+      const r = roleSelect.value;
+      therapistWrap.hidden = r !== 'THERAPIST';
+      permSection.hidden = r === 'OWNER';
+      ownerNote.hidden = r !== 'OWNER';
+      if (r !== 'OWNER') {
+        applyRoleDefaultsToCheckboxes(r);
+      }
+    });
+
+    resetPermBtn?.addEventListener('click', () => {
+      applyRoleDefaultsToCheckboxes(roleSelect.value);
+      toast('Checklist dikembalikan ke preset default role.', 'info');
     });
 
     form.addEventListener('submit', async (e) => {
@@ -320,11 +534,20 @@ export async function renderUsersPage(container, route) {
       clearFieldErrors(form);
       setButtonLoading(saveBtn, true, 'Menyimpan...');
 
+      const selectedRole = form.role.value;
+      const checkedPerms = ['dashboard:view'];
+      if (selectedRole !== 'OWNER') {
+        form.querySelectorAll('input[name="perm_item"]:checked').forEach((cb) => {
+          checkedPerms.push(cb.value);
+        });
+      }
+
       const payload = {
         username: form.username.value.trim(),
         full_name: form.full_name.value.trim(),
-        role: form.role.value,
-        therapist_id: form.role.value === 'THERAPIST' ? form.therapist_id.value : ''
+        role: selectedRole,
+        therapist_id: selectedRole === 'THERAPIST' ? form.therapist_id.value : '',
+        permissions: selectedRole === 'OWNER' ? undefined : checkedPerms
       };
 
       try {
@@ -333,7 +556,10 @@ export async function renderUsersPage(container, route) {
           payload.expected_version = existing.version;
           await apiCall('users.update', payload, { write: true });
           closeModal();
-          toast('Akun pengguna berhasil diperbarui.', 'success');
+          toast('Akun & hak akses pengguna berhasil disimpan.', 'success');
+          if (actor && actor.user_id === existing.user_id) {
+            await verifySessionWithServer();
+          }
         } else {
           if (form.password && form.password.value.trim()) {
             payload.password = form.password.value;

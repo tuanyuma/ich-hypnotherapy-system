@@ -11,6 +11,8 @@ import {
   formatDateTimeId,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   openModal,
   closeModal,
   clearFieldErrors,
@@ -34,11 +36,20 @@ const ACTION_BADGE_MAP = {
 
 export async function renderAuditLogsPage(container, route) {
   const canPurge = can('audit:purge');
-  const state = { page: 1, limit: 25, q: '', action_type: '', module: '', date_from: '', date_to: '' };
+  const state = {
+    page: 1,
+    limit: 10,
+    q: '',
+    action_type: '',
+    module: '',
+    date_from: '',
+    date_to: '',
+    sort: { field: 'timestamp', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    return `audit:list:p${state.page}:q=${state.q}:a=${state.action_type}:m=${state.module}:f=${state.date_from}:to=${state.date_to}`;
+    return `audit:list:p${state.page}:l${state.limit}:q=${state.q}:a=${state.action_type}:m=${state.module}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -74,6 +85,10 @@ export async function renderAuditLogsPage(container, route) {
           <option value="ASSESSMENTS">ASSESSMENTS</option>
           <option value="APPOINTMENTS">APPOINTMENTS</option>
           <option value="RME_SESSIONS">RME_SESSIONS</option>
+          <option value="PACKAGES">PACKAGES</option>
+          <option value="CLIENT_PACKAGES">CLIENT_PACKAGES</option>
+          <option value="PAYMENTS">PAYMENTS</option>
+          <option value="COMMISSIONS">COMMISSIONS</option>
           <option value="SETTINGS">SETTINGS</option>
           <option value="AUDIT_LOGS">AUDIT_LOGS</option>
         </select>
@@ -110,6 +125,7 @@ export async function renderAuditLogsPage(container, route) {
         page: state.page,
         limit: state.limit,
         q: state.q,
+        sort: state.sort,
         filters: {
           action_type: state.action_type || undefined,
           module: state.module || undefined,
@@ -147,7 +163,8 @@ export async function renderAuditLogsPage(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Waktu (WIB)</th>
+              ${sortableTh('ID Audit', 'audit_id', state.sort)}
+              ${sortableTh('Waktu (WIB)', 'timestamp', state.sort)}
               <th>Pengguna</th>
               <th>Aksi</th>
               <th>Modul &amp; Entitas</th>
@@ -157,6 +174,7 @@ export async function renderAuditLogsPage(container, route) {
           <tbody>
             ${items.map((l) => `
               <tr>
+                <td><span class="code-chip">${esc(l.audit_id)}</span></td>
                 <td class="font-mono text-xs">${esc(formatDateTimeId(l.timestamp))}</td>
                 <td class="text-sm">
                   <div class="font-mono"><strong>${esc(l.actor_username || '-')}</strong></div>
@@ -177,6 +195,11 @@ export async function renderAuditLogsPage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, state.sort, () => {
+      state.page = 1;
+      loadAudit();
+    });
   }
 
   function openPurgeModal() {

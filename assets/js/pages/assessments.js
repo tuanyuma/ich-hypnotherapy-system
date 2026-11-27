@@ -14,6 +14,8 @@ import {
   todayInputDate,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   mountClientAutocomplete,
   autoResizeTextarea,
   openModal,
@@ -46,11 +48,19 @@ export async function renderAssessmentsPage(container, route) {
     ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
     : [];
 
-  const listState = { page: 1, limit: 15, q: '', therapist_id: '', date_from: '', date_to: '' };
+  const listState = {
+    page: 1,
+    limit: 10,
+    q: '',
+    therapist_id: '',
+    date_from: '',
+    date_to: '',
+    sort: { field: 'assessment_code', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    return `assessments:list:p${listState.page}:q=${listState.q}:t=${listState.therapist_id}:f=${listState.date_from}:to=${listState.date_to}`;
+    return `assessments:list:p${listState.page}:l${listState.limit}:q=${listState.q}:t=${listState.therapist_id}:f=${listState.date_from}:to=${listState.date_to}:sf=${listState.sort.field}:${listState.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -124,6 +134,12 @@ export async function renderAssessmentsPage(container, route) {
         : 'Input Assessment Awal & Anamnesis',
       size: 'lg',
       bodyHtml: `
+        ${isEdit ? `
+          <div class="context-item flex-between mb-3 text-sm">
+            <div><strong>ID Assessment:</strong> <span class="code-chip">${esc(existing.assessment_code || existing.assessment_id)}</span></div>
+            <div><strong>ID Klien:</strong> <span class="code-chip">${esc(existing.client_code)}</span> • <strong>${esc(existing.client_name)}</strong></div>
+          </div>
+        ` : ''}
         <form id="asm-form" novalidate>
           <div class="form-grid form-grid-3">
             <div class="field">
@@ -303,6 +319,7 @@ export async function renderAssessmentsPage(container, route) {
         page: listState.page,
         limit: listState.limit,
         q: listState.q,
+        sort: listState.sort,
         filters: {
           therapist_id: listState.therapist_id || undefined,
           date_from: listState.date_from || undefined,
@@ -333,9 +350,12 @@ export async function renderAssessmentsPage(container, route) {
       title: `Detail Assessment — ${rec.client_name}`,
       size: 'lg',
       bodyHtml: `
-        <div class="flex-between mb-3 text-sm">
-          <span><strong>Klien:</strong> ${esc(rec.client_name)} <span class="font-mono text-muted">(${esc(rec.client_code)})</span></span>
-          <span><strong>Tanggal:</strong> ${esc(formatDateId(rec.assessment_date))} • <strong>Terapis:</strong> ${esc(rec.therapist_name || '-')}</span>
+        <div class="context-item flex-between mb-3 text-sm">
+          <div>
+            <strong>ID Assessment:</strong> <span class="code-chip">${esc(rec.assessment_code || rec.assessment_id)}</span>
+            <span style="margin-left:8px;"><strong>Klien:</strong> ${esc(rec.client_name)} <span class="code-chip">${esc(rec.client_code)}</span></span>
+          </div>
+          <div><strong>Tanggal:</strong> ${esc(formatDateId(rec.assessment_date))} • <strong>Terapis:</strong> ${esc(rec.therapist_name || '-')}</div>
         </div>
         <div class="context-item"><strong>Keluhan Utama</strong><div class="text-sm mt-2" style="white-space:pre-wrap;">${esc(rec.main_complaint || '-')}</div></div>
         <div class="context-item"><strong>Riwayat Keluhan</strong><div class="text-sm mt-2" style="white-space:pre-wrap;">${esc(rec.complaint_history || '-')}</div></div>
@@ -370,7 +390,8 @@ export async function renderAssessmentsPage(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Tanggal</th>
+              ${sortableTh('ID Assessment', 'assessment_code', listState.sort)}
+              ${sortableTh('Tanggal', 'assessment_date', listState.sort)}
               <th>Klien</th>
               <th>Terapis</th>
               <th>Keluhan Utama</th>
@@ -380,10 +401,11 @@ export async function renderAssessmentsPage(container, route) {
           <tbody>
             ${items.map((a) => `
               <tr data-row-id="${esc(a.assessment_id)}">
+                <td><span class="code-chip">${esc(a.assessment_code || a.assessment_id)}</span></td>
                 <td class="font-mono text-sm"><strong>${esc(formatDateId(a.assessment_date))}</strong></td>
                 <td>
                   <button type="button" class="link-btn" data-open-cln="${esc(a.client_id)}">${esc(a.client_name || '-')}</button>
-                  <div class="text-xs text-muted font-mono">${esc(a.client_code || '')}</div>
+                  <div class="mt-2"><span class="code-chip">${esc(a.client_code || '')}</span></div>
                 </td>
                 <td>${esc(a.therapist_name || '-')}</td>
                 <td class="text-sm">${esc(String(a.main_complaint || '').slice(0, 110))}${String(a.main_complaint || '').length > 110 ? '…' : ''}</td>
@@ -400,6 +422,11 @@ export async function renderAssessmentsPage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, listState.sort, () => {
+      listState.page = 1;
+      loadAssessments();
+    });
 
     const byId = Object.fromEntries(items.map((a) => [a.assessment_id, a]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));

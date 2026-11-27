@@ -14,8 +14,11 @@ import {
   SOURCE_CHANNEL_LABELS,
   statusBadge,
   formatDateId,
+  formatTimeId,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   openModal,
   closeModal,
   confirmDialog,
@@ -46,14 +49,24 @@ export async function renderClientsPage(container, route) {
 async function renderClientsListView(container, route) {
   const actor = getUser();
   const initialQ = (route && route.query && route.query.q) ? String(route.query.q).trim() : '';
-  const state = { page: 1, limit: 20, q: initialQ, status: '', source_channel: '' };
+  const state = {
+    page: 1,
+    limit: 10,
+    q: initialQ,
+    status: '',
+    source_channel: '',
+    sort: { field: 'client_code', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    if (state.page === 1 && !state.q && !state.status && !state.source_channel) {
+    if (
+      state.page === 1 && !state.q && !state.status && !state.source_channel &&
+      state.sort.field === 'client_code' && state.sort.dir === 'desc'
+    ) {
       return 'clients:list:p1:default';
     }
-    return `clients:list:p${state.page}:q=${state.q}:s=${state.status}:src=${state.source_channel}`;
+    return `clients:list:p${state.page}:l${state.limit}:q=${state.q}:s=${state.status}:src=${state.source_channel}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -115,6 +128,7 @@ async function renderClientsListView(container, route) {
         page: state.page,
         limit: state.limit,
         q: state.q,
+        sort: state.sort,
         filters: {
           status: state.status || undefined,
           source_channel: state.source_channel || undefined
@@ -155,21 +169,22 @@ async function renderClientsListView(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Klien &amp; Kode</th>
+              ${sortableTh('ID Klien', 'client_code', state.sort)}
+              <th>Nama Klien</th>
               <th>WhatsApp</th>
               <th>Sumber Info</th>
               <th>Terapis Utama</th>
               <th>Status</th>
-              <th>Terakhir Sesi</th>
+              ${sortableTh('Terakhir Sesi', 'last_session_at', state.sort)}
               <th>Aksi</th>
             </tr>
           </thead>
           <tbody>
             ${items.map((c) => `
               <tr data-row-id="${esc(c.client_id)}">
+                <td><span class="code-chip">${esc(c.client_code)}</span></td>
                 <td>
                   <div><button type="button" class="link-btn" data-detail-cln="${esc(c.client_id)}">${esc(c.full_name)}</button></div>
-                  <div class="text-xs text-muted font-mono">${esc(c.client_code)}</div>
                 </td>
                 <td class="font-mono text-sm">
                   <a href="https://wa.me/${esc(c.wa_normalized)}" target="_blank" rel="noopener noreferrer" class="link-btn">${esc(c.wa_normalized || c.phone_raw)}</a>
@@ -197,6 +212,11 @@ async function renderClientsListView(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, state.sort, () => {
+      state.page = 1;
+      loadClients();
+    });
 
     const byId = Object.fromEntries(items.map((c) => [c.client_id, c]));
     listWrap.querySelectorAll('[data-detail-cln]').forEach((btn) => {
@@ -305,6 +325,12 @@ async function openClientFormModal(existing, actor, onSaved, triggerBtn = null) 
     size: 'lg',
     bodyHtml: `
       <form id="client-form" novalidate>
+        ${isEdit ? `
+          <div class="context-item flex-between mb-3 text-sm">
+            <div><strong>ID Klien Permanen:</strong> <span class="code-chip">${esc(existing.client_code)}</span></div>
+            <div>${statusBadge('client', existing.status)}</div>
+          </div>
+        ` : ''}
         <div id="client-dup-banner" class="auth-notice" hidden></div>
         <div class="form-grid form-grid-2">
           <div class="field">
@@ -469,6 +495,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
     const appointments = detail.appointments || [];
     const hasAssessments = Array.isArray(detail.assessments) && can('assessments:view');
     const hasRme = Array.isArray(detail.rme_sessions) && can('rme:view');
+    const hasPackages = Array.isArray(detail.client_packages) && can('packages:view');
 
     document.getElementById('page-title').textContent = `Detail Klien — ${c.full_name}`;
     document.getElementById('page-subtitle').textContent = `${c.client_code} • ${c.wa_normalized}`;
@@ -479,6 +506,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
         <div class="flex-gap">
           <a href="https://wa.me/${esc(c.wa_normalized)}" target="_blank" rel="noopener noreferrer" class="btn btn-wa btn-sm">Chat WA</a>
           ${can('clients:edit') ? '<button type="button" class="btn btn-secondary btn-sm" id="btn-edit-detail-cln">Edit Biodata</button>' : ''}
+          ${can('packages:add') ? '<button type="button" class="btn btn-soft btn-sm" id="btn-quick-pkg">+ Paket</button>' : ''}
           ${can('appointments:add') ? '<button type="button" class="btn btn-soft btn-sm" id="btn-quick-apt">+ Jadwal</button>' : ''}
           ${can('assessments:add') ? '<button type="button" class="btn btn-soft btn-sm" id="btn-quick-asm">+ Assessment</button>' : ''}
           ${can('rme:add') ? '<button type="button" class="btn btn-primary btn-sm" id="btn-quick-rme">+ Sesi RME</button>' : ''}
@@ -488,19 +516,20 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
       <section class="card">
         <div class="card-header">
           <div>
-            <h2 class="card-title">${esc(c.full_name)} <span class="font-mono text-muted">(${esc(c.client_code)})</span></h2>
+            <h2 class="card-title">${esc(c.full_name)} <span class="code-chip" style="margin-left:6px;">${esc(c.client_code)}</span></h2>
             <p class="card-desc">Terakhir sesi: <strong>${esc(formatDateId(c.last_session_at))}</strong> • Total sesi: <strong>${esc(c.total_sessions || 0)}</strong></p>
           </div>
           ${statusBadge('client', c.status)}
         </div>
 
         <div class="form-grid form-grid-3 text-sm">
+          <div><span class="text-xs text-muted">ID Klien Permanen</span><div><span class="code-chip">${esc(c.client_code)}</span></div></div>
           <div><span class="text-xs text-muted">WhatsApp</span><div class="font-mono">${esc(c.wa_normalized || c.phone_raw || '-')}</div></div>
           <div><span class="text-xs text-muted">Jenis Kelamin / Tgl Lahir</span><div>${c.gender === 'L' ? 'Laki-laki' : c.gender === 'P' ? 'Perempuan' : '-'} • ${esc(formatDateId(c.birth_date))}</div></div>
           <div><span class="text-xs text-muted">Email</span><div>${esc(c.email || '-')}</div></div>
           <div><span class="text-xs text-muted">Sumber Informasi</span><div>${esc(SOURCE_CHANNEL_LABELS[c.source_channel] || c.source_channel || '-')} ${c.source_detail ? `(${esc(c.source_detail)})` : ''}</div></div>
           <div><span class="text-xs text-muted">Terapis Utama</span><div>${esc(c.primary_therapist_name || '-')}</div></div>
-          <div><span class="text-xs text-muted">Alamat</span><div>${esc(c.address || '-')}</div></div>
+          <div class="field-span-full"><span class="text-xs text-muted">Alamat</span><div>${esc(c.address || '-')}</div></div>
           ${c.notes ? `<div class="field-span-full"><span class="text-xs text-muted">Catatan</span><div>${esc(c.notes)}</div></div>` : ''}
         </div>
       </section>
@@ -508,6 +537,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
       <section class="card">
         <div class="tabs-bar" role="tablist">
           <button type="button" class="tab-btn ${activeTab === 'appointments' ? 'is-active' : ''}" data-tab="appointments" role="tab">Jadwal (${appointments.length})</button>
+          ${hasPackages ? `<button type="button" class="tab-btn ${activeTab === 'packages' ? 'is-active' : ''}" data-tab="packages" role="tab">Paket Terapi (${detail.client_packages.length})</button>` : ''}
           ${hasAssessments ? `<button type="button" class="tab-btn ${activeTab === 'assessments' ? 'is-active' : ''}" data-tab="assessments" role="tab">Assessment Awal (${detail.assessments.length})</button>` : ''}
           ${hasRme ? `<button type="button" class="tab-btn ${activeTab === 'rme' ? 'is-active' : ''}" data-tab="rme" role="tab">RME / Sesi Terapi (${detail.rme_sessions.length})</button>` : ''}
         </div>
@@ -535,11 +565,42 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
               <tbody>
                 ${appointments.map((a) => `
                   <tr>
-                    <td class="font-mono"><strong>${esc(formatDateId(a.scheduled_date))}</strong> ${esc(a.start_time)} WIB</td>
+                    <td class="font-mono"><strong>${esc(formatDateId(a.scheduled_date))}</strong> ${esc(formatTimeId(a.start_time))} WIB</td>
                     <td>${esc(a.therapist_name || '-')}</td>
                     <td>${statusBadge('mode', a.session_mode)}</td>
                     <td>${statusBadge('appointment', a.status)}</td>
                     <td class="text-xs">${esc(a.cancel_reason ? `Alasan batal: ${a.cancel_reason}` : (a.notes || '-'))}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } else if (name === 'packages' && hasPackages) {
+        const list = detail.client_packages;
+        if (list.length === 0) {
+          tabContent.innerHTML = '<div class="empty-state"><p class="empty-state-title">Belum ada paket terapi</p></div>';
+          return;
+        }
+        tabContent.innerHTML = `
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Kode</th><th>Nama Paket</th><th>Kuota &amp; Sisa Sesi</th><th>Mulai &amp; Kedaluwarsa</th><th>Status</th></tr></thead>
+              <tbody>
+                ${list.map((cp) => `
+                  <tr>
+                    <td><span class="code-chip">${esc(cp.client_package_code || cp.client_package_id)}</span></td>
+                    <td><strong>${esc(cp.package_name)}</strong></td>
+                    <td>
+                      <span class="quota-chip ${Number(cp.remaining_sessions) <= 0 ? 'is-empty' : ''}">
+                        Sisa ${esc(cp.remaining_sessions)} dari ${esc(cp.total_sessions)} Sesi
+                      </span>
+                    </td>
+                    <td class="text-xs">
+                      <div>Mulai: <strong>${esc(formatDateId(cp.start_date))}</strong></div>
+                      <div>Berlaku s/d: <strong>${esc(formatDateId(cp.expiry_date))}</strong></div>
+                    </td>
+                    <td>${statusBadge('client_package', cp.status)}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -573,7 +634,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
           <div class="context-item">
             <div class="flex-between">
               <div>
-                <span class="badge badge-primary">Sesi #${esc(r.session_no)}</span>
+                <span class="session-chip">Sesi ke-${esc(r.session_no)}</span>
                 <strong style="margin-left:6px;">${esc(formatDateId(r.session_date))}</strong>
                 ${statusBadge('mode', r.session_mode)}
               </div>
@@ -602,6 +663,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
         renderClientDetailView(container, clientId, true);
       }, editBtn);
     });
+    container.querySelector('#btn-quick-pkg')?.addEventListener('click', () => navigate(`#/packages?client_id=${clientId}&new_assign=1`));
     container.querySelector('#btn-quick-apt')?.addEventListener('click', () => navigate(`#/appointments?client_id=${clientId}&new=1`));
     container.querySelector('#btn-quick-asm')?.addEventListener('click', () => navigate(`#/assessments?client_id=${clientId}`));
     container.querySelector('#btn-quick-rme')?.addEventListener('click', () => navigate(`#/rme?client_id=${clientId}`));

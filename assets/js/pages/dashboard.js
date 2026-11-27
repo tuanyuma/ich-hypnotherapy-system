@@ -9,7 +9,7 @@
 import { apiCall } from '../api.js';
 import { getUser, can, roleLabel } from '../auth.js';
 import { navigate } from '../router.js';
-import { esc, formatDateId, statusBadge, renderSkeletonCards, renderSkeletonTable, toast } from '../ui.js';
+import { esc, formatDateId, formatTimeId, statusBadge, renderSkeletonCards, renderSkeletonTable, toast } from '../ui.js';
 import { storeGet, storeSet, storeIsFresh, prefetchCoreModules } from '../store.js';
 import { animateBentoStagger } from '../motion.js';
 
@@ -339,10 +339,10 @@ export async function renderDashboardPage(container, route) {
           <table class="table">
             <thead>
               <tr>
-                <th>Klien</th>
                 <th>Tanggal &amp; Jam</th>
+                <th>Nama Klien</th>
                 <th>Terapis</th>
-                <th>Mode &amp; Status</th>
+                <th>Status</th>
                 <th>Pengingat</th>
               </tr>
             </thead>
@@ -351,24 +351,24 @@ export async function renderDashboardPage(container, route) {
                 const initials = String(ap.client_name || 'K').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
                 return `
                   <tr>
+                    <td class="font-mono text-xs">
+                      <div><strong>${esc(formatDateId(ap.scheduled_date))}</strong></div>
+                      <div class="text-muted">${esc(formatTimeId(ap.start_time))} WIB (${esc(ap.duration_min)} mnt)</div>
+                    </td>
                     <td>
                       <div class="flex-gap" style="flex-wrap:nowrap;">
                         <span class="client-initial" aria-hidden="true">${esc(initials)}</span>
                         <div>
                           <button type="button" class="link-btn" data-open-client="${esc(ap.client_id)}">${esc(ap.client_name || '-')}</button>
-                          <div class="text-xs text-muted font-mono">${esc(ap.client_code || '')}</div>
+                          <div><span class="code-chip" style="margin-top:2px;">${esc(ap.client_code || '')}</span></div>
                         </div>
                       </div>
-                    </td>
-                    <td class="font-mono text-xs">
-                      <div><strong>${esc(formatDateId(ap.scheduled_date))}</strong></div>
-                      <div class="text-muted">${esc(ap.start_time)} WIB (${esc(ap.duration_min)} mnt)</div>
                     </td>
                     <td class="text-sm">${esc(ap.therapist_name || '-')}</td>
                     <td>
                       <div class="flex-gap">
-                        ${statusBadge('mode', ap.session_mode)}
                         ${statusBadge('appointment', ap.status)}
+                        ${statusBadge('mode', ap.session_mode)}
                       </div>
                     </td>
                     <td>

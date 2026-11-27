@@ -11,10 +11,13 @@ import { navigate } from '../router.js';
 import {
   esc,
   formatDateId,
+  formatTimeId,
   todayInputDate,
   statusBadge,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   mountClientAutocomplete,
   openModal,
   closeModal,
@@ -38,17 +41,28 @@ export async function renderAppointmentsPage(container, route) {
     ? ((storeGet('therapists:options:all') && storeGet('therapists:options:all').data) || [])
     : [];
 
-  const state = { page: 1, limit: 20, q: '', therapist_id: '', status: '', session_mode: '', date_from: '', date_to: '' };
+  const state = {
+    page: 1,
+    limit: 10,
+    q: '',
+    therapist_id: '',
+    status: '',
+    session_mode: '',
+    date_from: '',
+    date_to: '',
+    sort: { field: 'appointment_code', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
     if (
       state.page === 1 && !state.q && !state.therapist_id &&
-      !state.status && !state.session_mode && !state.date_from && !state.date_to
+      !state.status && !state.session_mode && !state.date_from && !state.date_to &&
+      state.sort.field === 'appointment_code' && state.sort.dir === 'desc'
     ) {
       return 'appointments:list:p1:default';
     }
-    return `appointments:list:p${state.page}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:m=${state.session_mode}:f=${state.date_from}:to=${state.date_to}`;
+    return `appointments:list:p${state.page}:l${state.limit}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:m=${state.session_mode}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -131,6 +145,7 @@ export async function renderAppointmentsPage(container, route) {
         page: state.page,
         limit: state.limit,
         q: state.q,
+        sort: state.sort,
         filters: {
           therapist_id: state.therapist_id || undefined,
           status: state.status || undefined,
@@ -169,7 +184,8 @@ export async function renderAppointmentsPage(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Tanggal &amp; Jam</th>
+              ${sortableTh('ID Jadwal', 'appointment_code', state.sort)}
+              ${sortableTh('Tanggal & Jam', 'scheduled_datetime', state.sort)}
               <th>Klien</th>
               <th>Terapis</th>
               <th>Jenis &amp; Lokasi</th>
@@ -182,13 +198,14 @@ export async function renderAppointmentsPage(container, route) {
               const isOpen = a.status === 'SCHEDULED' || a.status === 'CONFIRMED';
               return `
                 <tr data-row-id="${esc(a.appointment_id)}">
+                  <td><span class="code-chip">${esc(a.appointment_code || a.appointment_id)}</span></td>
                   <td class="font-mono text-sm">
                     <div><strong>${esc(formatDateId(a.scheduled_date))}</strong></div>
-                    <div class="text-xs text-muted">${esc(a.start_time)} WIB (${esc(a.duration_min)} mnt)</div>
+                    <div class="text-xs text-muted">${esc(formatTimeId(a.start_time))} WIB (${esc(a.duration_min)} mnt)</div>
                   </td>
                   <td>
                     <button type="button" class="link-btn" data-open-cln="${esc(a.client_id)}">${esc(a.client_name || '-')}</button>
-                    <div class="text-xs text-muted font-mono">${esc(a.client_code || '')}</div>
+                    <div class="mt-2"><span class="code-chip">${esc(a.client_code || '')}</span></div>
                   </td>
                   <td>${esc(a.therapist_name || '-')}</td>
                   <td>
@@ -221,6 +238,11 @@ export async function renderAppointmentsPage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, state.sort, () => {
+      state.page = 1;
+      loadAppointments();
+    });
 
     const byId = Object.fromEntries(items.map((a) => [a.appointment_id, a]));
     listWrap.querySelectorAll('[data-open-cln]').forEach((b) => b.addEventListener('click', () => navigate(`#/clients/${b.dataset.openCln}`)));
@@ -260,6 +282,12 @@ export async function renderAppointmentsPage(container, route) {
       title: isEdit ? `Edit Jadwal — ${existing.client_name}` : 'Buat Jadwal / Appointment Baru',
       size: 'lg',
       bodyHtml: `
+        ${isEdit ? `
+          <div class="context-item flex-between mb-3 text-sm">
+            <div><strong>ID Jadwal:</strong> <span class="code-chip">${esc(existing.appointment_code || existing.appointment_id)}</span></div>
+            <div><strong>ID Klien:</strong> <span class="code-chip">${esc(existing.client_code)}</span> • <strong>${esc(existing.client_name)}</strong></div>
+          </div>
+        ` : ''}
         <form id="apt-form" novalidate>
           <div class="form-grid form-grid-2">
             <div class="field field-span-full">
@@ -297,7 +325,7 @@ export async function renderAppointmentsPage(container, route) {
             </div>
             <div class="field">
               <label for="ap-time">Jam Mulai (WIB) <span class="req-star">*</span></label>
-              <input id="ap-time" name="start_time" class="input" type="time" value="${esc(existing ? existing.start_time : '10:00')}" required>
+              <input id="ap-time" name="start_time" class="input" type="time" value="${esc(existing ? formatTimeId(existing.start_time) : '10:00')}" required>
             </div>
             <div class="field">
               <label for="ap-dur">Durasi (menit)</label>
@@ -402,7 +430,7 @@ export async function renderAppointmentsPage(container, route) {
       title: 'Batalkan Jadwal (Soft Cancel)',
       bodyHtml: `
         <p class="text-sm" style="margin:0 0 12px;">
-          Batalkan jadwal <strong>${esc(apt.client_name)}</strong> pada <strong>${esc(formatDateId(apt.scheduled_date))} ${esc(apt.start_time)} WIB</strong>?
+          Batalkan jadwal <strong>${esc(apt.client_name)}</strong> pada <strong>${esc(formatDateId(apt.scheduled_date))} ${esc(formatTimeId(apt.start_time))} WIB</strong>?
           Riwayat jadwal tetap tersimpan dan slot waktu terapis akan terbuka kembali.
         </p>
         <form id="cancel-apt-form" novalidate>

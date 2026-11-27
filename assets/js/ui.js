@@ -40,6 +40,16 @@ export function formatDateTimeId(isoStr) {
   return `${formatDateId(match[1])}, ${match[2]} WIB`;
 }
 
+export function formatTimeId(timeStr) {
+  const s = String(timeStr || '').trim();
+  if (!s) return '-';
+  const m1899 = /(?:1899-12-3[01]|1900-01-01)[T\s](\d{2}:\d{2})/.exec(s);
+  if (m1899) return m1899[1];
+  const m = /^(\d{1,2}):(\d{2})/.exec(s);
+  if (m) return `${m[1].padStart(2, '0')}:${m[2]}`;
+  return s;
+}
+
 export function todayInputDate() {
   const now = new Date();
   const wib = new Date(now.getTime() + (7 * 60 + now.getTimezoneOffset()) * 60000);
@@ -87,6 +97,30 @@ export function statusBadge(type, value) {
       ONLINE: ['badge-info', 'Online'],
       OFFLINE: ['badge-primary', 'Offline'],
       BOTH: ['badge-success', 'Online & Offline']
+    },
+    package: {
+      ACTIVE: ['badge-success', 'Aktif'],
+      INACTIVE: ['badge-neutral', 'Nonaktif']
+    },
+    client_package: {
+      ACTIVE: ['badge-success', 'Aktif'],
+      COMPLETED: ['badge-primary', 'Selesai (Habis)'],
+      EXPIRED: ['badge-warning', 'Kedaluwarsa'],
+      CANCELLED: ['badge-danger', 'Dibatalkan']
+    },
+    payment_type: {
+      INCOME: ['badge-success', 'Pemasukan'],
+      EXPENSE: ['badge-danger', 'Pengeluaran']
+    },
+    payment: {
+      LUNAS: ['badge-success', 'Lunas'],
+      DP: ['badge-warning', 'DP / Cicilan'],
+      BATAL: ['badge-danger', 'Batal']
+    },
+    commission: {
+      UNPAID: ['badge-warning', 'Belum Dibayar'],
+      PAID: ['badge-success', 'Sudah Dibayar'],
+      VOID: ['badge-neutral', 'Batal / Void']
     }
   };
   const entry = (maps[type] && maps[type][value]) || ['badge-neutral', value || '-'];
@@ -399,10 +433,25 @@ export function renderSkeletonTable(rows = 5) {
   return html + '</div>';
 }
 
+function buildPageSequence(current, total) {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const pages = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push('...');
+  for (let p = start; p <= end; p++) pages.push(p);
+  if (end < total - 1) pages.push('...');
+  pages.push(total);
+  return pages;
+}
+
 export function renderPagination(container, meta, onPageChange) {
   if (!container || !meta) return;
   const page = Number(meta.page || 1);
-  const totalPages = Number(meta.total_pages || 1);
+  const limit = Number(meta.limit || 10);
+  const totalPages = Math.max(Number(meta.total_pages || 1), 1);
   const total = Number(meta.total || 0);
 
   if (total === 0) {
@@ -410,11 +459,19 @@ export function renderPagination(container, meta, onPageChange) {
     return;
   }
 
+  const fromIdx = (page - 1) * limit + 1;
+  const toIdx = Math.min(page * limit, total);
+  const seq = buildPageSequence(page, totalPages);
+
   container.innerHTML = `
     <div class="pagination-bar">
-      <span>Menampilkan halaman <strong>${page}</strong> dari <strong>${totalPages}</strong> (Total ${total} data)</span>
-      <div class="pagination-controls">
+      <span>Menampilkan <strong>${fromIdx}–${toIdx}</strong> dari <strong>${total}</strong> data (Maks. ${limit}/halaman)</span>
+      <div class="pagination-controls" role="navigation" aria-label="Navigasi halaman">
         <button type="button" class="btn btn-secondary btn-sm" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>← Sebelumnya</button>
+        ${seq.map((item) => item === '...'
+          ? '<span class="page-ellipsis" aria-hidden="true">…</span>'
+          : `<button type="button" class="btn-page ${item === page ? 'is-active' : ''}" data-page="${item}" ${item === page ? 'aria-current="page"' : ''}>${item}</button>`
+        ).join('')}
         <button type="button" class="btn btn-secondary btn-sm" data-page="${page + 1}" ${page >= totalPages ? 'disabled' : ''}>Berikutnya →</button>
       </div>
     </div>
@@ -423,9 +480,42 @@ export function renderPagination(container, meta, onPageChange) {
   container.querySelectorAll('[data-page]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const target = Number(btn.dataset.page);
-      if (target >= 1 && target <= totalPages) {
+      if (target >= 1 && target <= totalPages && target !== page) {
         onPageChange(target);
       }
+    });
+  });
+}
+
+/**
+ * Header kolom tabel yang dapat diklik untuk sorting server-side (ID & Tanggal/Waktu).
+ */
+export function sortableTh(label, field, currentSort) {
+  const active = currentSort && currentSort.field === field;
+  const dir = active ? String(currentSort.dir || 'desc').toLowerCase() : '';
+  const indicator = active ? (dir === 'asc' ? '↑' : '↓') : '⇅';
+  return `
+    <th class="th-sortable">
+      <button type="button" class="th-sort-btn ${active ? 'is-active' : ''}" data-sort-field="${esc(field)}" title="Urutkan berdasarkan ${esc(label)}">
+        <span>${esc(label)}</span>
+        <span class="th-sort-icon" aria-hidden="true">${indicator}</span>
+      </button>
+    </th>
+  `;
+}
+
+export function bindSortableHeaders(container, sortState, onSortChange) {
+  if (!container || !sortState) return;
+  container.querySelectorAll('[data-sort-field]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const clickedField = btn.dataset.sortField;
+      if (sortState.field === clickedField) {
+        sortState.dir = sortState.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        sortState.field = clickedField;
+        sortState.dir = 'desc';
+      }
+      onSortChange();
     });
   });
 }

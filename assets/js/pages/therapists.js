@@ -13,6 +13,8 @@ import {
   statusBadge,
   renderSkeletonTable,
   renderPagination,
+  sortableTh,
+  bindSortableHeaders,
   openModal,
   closeModal,
   confirmDialog,
@@ -33,11 +35,18 @@ import { animateRowRemove } from '../motion.js';
 
 export async function renderTherapistsPage(container, route) {
   const showCommission = can('therapists:view_commission');
-  const state = { page: 1, limit: 20, q: '', status: '', service_mode: '' };
+  const state = {
+    page: 1,
+    limit: 10,
+    q: '',
+    status: '',
+    service_mode: '',
+    sort: { field: 'code', dir: 'desc' }
+  };
   let activeFetchId = 0;
 
   function buildCacheKey() {
-    return `therapists:list:p${state.page}:q=${state.q}:s=${state.status}:m=${state.service_mode}`;
+    return `therapists:list:p${state.page}:l${state.limit}:q=${state.q}:s=${state.status}:m=${state.service_mode}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
   container.innerHTML = `
@@ -98,6 +107,7 @@ export async function renderTherapistsPage(container, route) {
         page: state.page,
         limit: state.limit,
         q: state.q,
+        sort: state.sort,
         filters: {
           status: state.status || undefined,
           service_mode: state.service_mode || undefined
@@ -145,7 +155,8 @@ export async function renderTherapistsPage(container, route) {
         <table class="table">
           <thead>
             <tr>
-              <th>Kode &amp; Nama</th>
+              ${sortableTh('Kode Terapis', 'code', state.sort)}
+              <th>Nama &amp; Kontak</th>
               <th>Area &amp; Spesialisasi</th>
               <th>Layanan</th>
               <th>Tarif Sesi</th>
@@ -157,9 +168,10 @@ export async function renderTherapistsPage(container, route) {
           <tbody>
             ${items.map((t) => `
               <tr data-row-id="${esc(t.therapist_id)}">
+                <td><span class="code-chip">${esc(t.code)}</span></td>
                 <td>
                   <div><button type="button" class="link-btn" data-view-trp="${esc(t.therapist_id)}">${esc(t.full_name)}</button></div>
-                  <div class="text-xs text-muted font-mono">${esc(t.code)} ${t.phone ? `• ${esc(t.phone)}` : ''}</div>
+                  <div class="text-xs text-muted font-mono">${esc(t.phone || '-')}</div>
                 </td>
                 <td>
                   <div>${esc(t.area || '-')}</div>
@@ -182,6 +194,11 @@ export async function renderTherapistsPage(container, route) {
         </table>
       </div>
     `;
+
+    bindSortableHeaders(listWrap, state.sort, () => {
+      state.page = 1;
+      loadTherapists();
+    });
 
     const byId = Object.fromEntries(items.map((t) => [t.therapist_id, t]));
     listWrap.querySelectorAll('[data-view-trp]').forEach((btn) => {

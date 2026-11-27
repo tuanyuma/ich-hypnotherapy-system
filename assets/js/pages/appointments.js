@@ -31,7 +31,8 @@ import {
   storeSet,
   storeIsFresh,
   storeInvalidate,
-  getTherapistsOptionsCached
+  getTherapistsOptionsCached,
+  prefetchNextPage
 } from '../store.js';
 
 export async function renderAppointmentsPage(container, route) {
@@ -162,6 +163,23 @@ export async function renderAppointmentsPage(container, route) {
         renderPagination(pagWrap, res.meta, (p) => {
           state.page = p;
           loadAppointments();
+        });
+      }
+      if (res.meta && res.meta.page < res.meta.total_pages) {
+        const nextP = res.meta.page + 1;
+        const nextKey = `appointments:list:p${nextP}:l${state.limit}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:m=${state.session_mode}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
+        prefetchNextPage(nextKey, 'appointments.list', {
+          page: nextP,
+          limit: state.limit,
+          q: state.q,
+          sort: state.sort,
+          filters: {
+            therapist_id: state.therapist_id || undefined,
+            status: state.status || undefined,
+            session_mode: state.session_mode || undefined,
+            date_from: state.date_from || undefined,
+            date_to: state.date_to || undefined
+          }
         });
       }
     } catch (err) {

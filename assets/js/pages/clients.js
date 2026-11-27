@@ -16,6 +16,7 @@ import {
   formatDateId,
   formatTimeId,
   renderSkeletonTable,
+  renderSkeletonDetail,
   renderPagination,
   sortableTh,
   bindSortableHeaders,
@@ -34,7 +35,8 @@ import {
   storeIsFresh,
   storeInvalidate,
   storeUpdateListItems,
-  getTherapistsOptionsCached
+  getTherapistsOptionsCached,
+  prefetchNextPage
 } from '../store.js';
 import { animateRowRemove } from '../motion.js';
 
@@ -142,6 +144,17 @@ async function renderClientsListView(container, route) {
         renderPagination(pagWrap, res.meta, (p) => {
           state.page = p;
           loadClients();
+        });
+      }
+      if (res.meta && res.meta.page < res.meta.total_pages) {
+        const nextP = res.meta.page + 1;
+        const nextKey = `clients:list:p${nextP}:l${state.limit}:q=${state.q}:s=${state.status}:src=${state.source_channel}:sf=${state.sort.field}:${state.sort.dir}`;
+        prefetchNextPage(nextKey, 'clients.list', {
+          page: nextP,
+          limit: state.limit,
+          q: state.q,
+          sort: state.sort,
+          filters: { status: state.status || undefined, source_channel: state.source_channel || undefined }
         });
       }
     } catch (err) {
@@ -688,7 +701,7 @@ async function renderClientDetailView(container, clientId, forceRefresh = false)
     paintDetail(cached.data);
     if (storeIsFresh(detailKey, 25000)) return;
   } else {
-    container.innerHTML = renderSkeletonTable(6);
+    container.innerHTML = renderSkeletonDetail();
   }
 
   try {

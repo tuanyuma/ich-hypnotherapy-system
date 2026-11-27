@@ -142,7 +142,11 @@ export async function renderPackagesPage(container, route) {
 
   async function loadClientPackages({ force = false, silent = false } = {}) {
     const mySeq = ++fetchSeq;
-    const key = `packages:cpk:p${cpkState.page}:q=${cpkState.q}:s=${cpkState.status}:sf=${cpkState.sort.field}:${cpkState.sort.dir}`;
+    const isDefaultCpk = cpkState.page === 1 && !cpkState.q && !cpkState.status &&
+      cpkState.sort.field === 'client_package_code' && cpkState.sort.dir === 'desc';
+    const key = isDefaultCpk
+      ? 'packages:cpk:p1:default'
+      : `packages:cpk:p${cpkState.page}:q=${cpkState.q}:s=${cpkState.status}:sf=${cpkState.sort.field}:${cpkState.sort.dir}`;
     const cached = storeGet(key);
 
     if (cached && Array.isArray(cached.data) && !force) {
@@ -504,7 +508,11 @@ export async function renderPackagesPage(container, route) {
 
   async function loadMasterPackages({ force = false, silent = false } = {}) {
     const mySeq = ++fetchSeq;
-    const key = `packages:master:p${pkgState.page}:q=${pkgState.q}:s=${pkgState.status}:sf=${pkgState.sort.field}:${pkgState.sort.dir}`;
+    const isDefaultPkg = pkgState.page === 1 && !pkgState.q && !pkgState.status &&
+      pkgState.sort.field === 'package_code' && pkgState.sort.dir === 'desc';
+    const key = isDefaultPkg
+      ? 'packages:master:p1:default'
+      : `packages:master:p${pkgState.page}:q=${pkgState.q}:s=${pkgState.status}:sf=${pkgState.sort.field}:${pkgState.sort.dir}`;
     const cached = storeGet(key);
 
     if (cached && Array.isArray(cached.data) && !force) {

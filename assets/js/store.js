@@ -106,7 +106,7 @@ export async function getTherapistsOptionsCached({ activeOnly = false, unlinkedO
 }
 
 /**
- * Prefetch diam-diam 1 round-trip setelah login/dashboard agar pindah menu instan (<50ms).
+ * Prefetch diam-diam 1 round-trip setelah login/dashboard agar pindah antar 8+ menu utama instan (<50ms).
  */
 export function prefetchCoreModules(force = false) {
   const now = Date.now();
@@ -121,11 +121,40 @@ export function prefetchCoreModules(force = false) {
         storeSet('therapists:options:all', b.therapists_options);
         storeSet('therapists:options:active', b.therapists_options.filter((t) => t.status === 'ACTIVE'));
       }
+      if (b.therapists_page1 && Array.isArray(b.therapists_page1.items)) {
+        storeSet('therapists:list:p1:default', b.therapists_page1.items, b.therapists_page1.meta);
+      }
       if (b.clients_page1 && Array.isArray(b.clients_page1.items)) {
         storeSet('clients:list:p1:default', b.clients_page1.items, b.clients_page1.meta);
       }
       if (b.appointments_page1 && Array.isArray(b.appointments_page1.items)) {
         storeSet('appointments:list:p1:default', b.appointments_page1.items, b.appointments_page1.meta);
+      }
+      if (b.assessments_page1 && Array.isArray(b.assessments_page1.items)) {
+        storeSet('assessments:list:p1:default', b.assessments_page1.items, b.assessments_page1.meta);
+      }
+      if (b.rme_page1 && Array.isArray(b.rme_page1.items)) {
+        storeSet('rme:list:p1:default', b.rme_page1.items, b.rme_page1.meta);
+      }
+      if (b.client_packages_page1 && Array.isArray(b.client_packages_page1.items)) {
+        storeSet('packages:cpk:p1:default', b.client_packages_page1.items, b.client_packages_page1.meta);
+      }
+      if (b.packages_page1 && Array.isArray(b.packages_page1.items)) {
+        storeSet('packages:master:p1:default', b.packages_page1.items, b.packages_page1.meta);
+      }
+      if (b.payments_page1 && Array.isArray(b.payments_page1.items)) {
+        storeSet(
+          'payments:list:p1:default',
+          { items: b.payments_page1.items, summary: b.payments_page1.summary },
+          b.payments_page1.meta
+        );
+      }
+      if (b.commissions_page1 && Array.isArray(b.commissions_page1.items)) {
+        storeSet(
+          'commissions:list:p1:default',
+          { items: b.commissions_page1.items, summary: b.commissions_page1.summary },
+          b.commissions_page1.meta
+        );
       }
       lastPrefetchAt = Date.now();
     })
@@ -137,4 +166,68 @@ export function prefetchCoreModules(force = false) {
     });
 
   return prefetchInFlight;
+}
+
+/**
+ * Prefetch diam-diam saat kursor mengarah (hover/focus) ke menu sekunder di sidebar
+ * (Pengguna, Laporan, Audit Log, atau modul inti jika belum terisi di RAM).
+ */
+export function prefetchRouteIntent(routeId) {
+  if (!routeId) return;
+  const silentOpts = { background: true };
+
+  if (routeId === 'dashboard' && !storeIsFresh('dashboard:summary', 30000)) {
+    apiCall('dashboard.summary', { upcoming_limit: 15 }, silentOpts)
+      .then((res) => res && res.data && storeSet('dashboard:summary', res.data))
+      .catch(() => {});
+    return;
+  }
+  if (routeId === 'users' && !storeIsFresh('users:list:p1:default', 30000)) {
+    apiCall('users.list', { page: 1, limit: 10, sort: { field: 'created_at', dir: 'desc' } }, silentOpts)
+      .then((res) => res && res.data && storeSet('users:list:p1:default', { items: res.data.items || [], role_defaults: res.data.role_defaults }, res.meta))
+      .catch(() => {});
+    return;
+  }
+  if (routeId === 'audit' && !storeIsFresh('audit:list:p1:default', 20000)) {
+    apiCall('audit.list', { page: 1, limit: 10, sort: { field: 'timestamp', dir: 'desc' } }, silentOpts)
+      .then((res) => res && res.data && storeSet('audit:list:p1:default', res.data.items || [], res.meta))
+      .catch(() => {});
+    return;
+  }
+  if (routeId === 'reports') {
+    const now = new Date();
+    const wib = new Date(now.getTime() + (7 * 60 + now.getTimezoneOffset()) * 60000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate())}`;
+    const monthStart = today.slice(0, 8) + '01';
+    const rKey = `reports:summary:${monthStart}:${today}:`;
+    if (!storeIsFresh(rKey, 30000)) {
+      apiCall('reports.summary', { date_from: monthStart, date_to: today }, silentOpts)
+        .then((res) => res && res.data && storeSet(rKey, res.data))
+        .catch(() => {});
+    }
+    return;
+  }
+  if (routeId === 'clients' || routeId === 'appointments' || routeId === 'assessments' ||
+      routeId === 'rme' || routeId === 'packages' || routeId === 'payments' ||
+      routeId === 'commissions' || routeId === 'therapists') {
+    if (!storeIsFresh(`${routeId === 'packages' ? 'packages:cpk' : routeId + ':list'}:p1:default`, 40000)) {
+      prefetchCoreModules(false);
+    }
+  }
+}
+
+/**
+ * Prefetch diam-diam halaman berikutnya (page + 1) saat pagination memiliki halaman lanjutan,
+ * sehingga klik "Berikutnya →" atau nomor halaman terasa instan (<50ms).
+ */
+export function prefetchNextPage(nextKey, action, payload, extractDataFn = null) {
+  if (!nextKey || storeIsFresh(nextKey, 25000)) return;
+  apiCall(action, payload, { background: true })
+    .then((res) => {
+      if (!res || !res.data) return;
+      const val = typeof extractDataFn === 'function' ? extractDataFn(res.data) : (res.data.items || []);
+      storeSet(nextKey, val, res.meta);
+    })
+    .catch(() => {});
 }

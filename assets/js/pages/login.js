@@ -7,6 +7,7 @@ import { apiCall } from '../api.js';
 import { isGasUrlConfigured } from '../config.js';
 import { setSession, getPublicSettings, getUser, performLogout } from '../auth.js';
 import { esc, clearFieldErrors, showFieldErrors, toast, authLoader, setButtonLoading } from '../ui.js';
+import { storeSet, prefetchCoreModules } from '../store.js';
 import { animatePageEnter } from '../motion.js';
 
 export function renderLoginView(container, { onLoginSuccess }) {
@@ -93,6 +94,13 @@ export function renderLoginView(container, { onLoginSuccess }) {
     try {
       const res = await apiCall('auth.login', { username, password }, { skipAuth: true, hideTopLoader: true });
       setSession(res.data.token, res.data.user, res.data.permissions);
+      // Login Piggyback Hydration: simpan data dashboard langsung ke RAM agar tampil 0ms
+      if (res.data.initial_dashboard) {
+        storeSet('dashboard:summary', res.data.initial_dashboard);
+      }
+      if (res.data.user && !res.data.user.must_change_password) {
+        setTimeout(() => prefetchCoreModules(true), 60);
+      }
       toast(`Selamat datang, ${res.data.user.full_name}`, 'success');
       onLoginSuccess(res.data.user);
     } catch (err) {

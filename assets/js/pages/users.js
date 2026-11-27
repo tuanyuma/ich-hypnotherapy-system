@@ -173,6 +173,12 @@ export async function renderUsersPage(container, route) {
   let activeFetchId = 0;
 
   function buildCacheKey() {
+    if (
+      state.page === 1 && !state.q && !state.role && !state.status &&
+      state.sort.field === 'created_at' && state.sort.dir === 'desc'
+    ) {
+      return 'users:list:p1:default';
+    }
     return `users:list:p${state.page}:l${state.limit}:q=${state.q}:r=${state.role}:s=${state.status}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 
@@ -226,8 +232,12 @@ export async function renderUsersPage(container, route) {
     const key = buildCacheKey();
     const cached = storeGet(key);
 
-    if (cached && Array.isArray(cached.data) && !force) {
-      renderTable(cached.data);
+    const cachedItems = cached && (Array.isArray(cached.data) ? cached.data : (cached.data && cached.data.items));
+    if (Array.isArray(cachedItems) && !force) {
+      if (cached.data && cached.data.role_defaults) {
+        roleDefaultsMap = Object.assign({}, FALLBACK_ROLE_DEFAULTS, cached.data.role_defaults);
+      }
+      renderTable(cachedItems);
       renderPagination(pagWrap, cached.meta, (p) => {
         state.page = p;
         loadUsers();

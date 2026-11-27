@@ -97,6 +97,16 @@ async function performSingleFetch(body, timeoutMs) {
   }
 }
 
+const inFlightReads = new Map();
+
+function buildInFlightKey(action, payload, token) {
+  try {
+    return `${action}|${String(token || '').slice(-12)}|${JSON.stringify(payload || {})}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 export async function apiCall(action, payload = {}, options = {}) {
   if (!isGasUrlConfigured()) {
     throw new ApiError(
@@ -109,15 +119,28 @@ export async function apiCall(action, payload = {}, options = {}) {
     throw new ApiError('OFFLINE', 'Koneksi internet terputus. Periksa jaringan Anda.');
   }
 
-  const useTopLoader = options.hideTopLoader !== true;
+  const isSilent = options.hideTopLoader === true || options.background === true || options.silentBackground === true;
+  const useTopLoader = !isSilent;
   if (useTopLoader) {
     progressHooks.onStart(action);
+  }
+
+  const token = options.skipAuth ? '' : authHooks.getToken();
+  const canDedupe = !options.write && action !== 'auth.login' && action !== 'auth.logout' && !options.noDedupe;
+  const dedupeKey = canDedupe ? buildInFlightKey(action, payload, token) : '';
+
+  if (dedupeKey && inFlightReads.has(dedupeKey)) {
+    try {
+      return await inFlightReads.get(dedupeKey);
+    } finally {
+      if (useTopLoader) progressHooks.onDone(action);
+    }
   }
 
   const timeoutMs = options.timeoutMs || (options.write ? 45000 : APP_FRONTEND_CONFIG.REQUEST_TIMEOUT_MS);
   const body = {
     action,
-    token: options.skipAuth ? '' : authHooks.getToken(),
+    token,
     request_id: options.requestId || (options.write ? generateRequestId() : ''),
     payload: payload || {}
   };
@@ -125,7 +148,7 @@ export async function apiCall(action, payload = {}, options = {}) {
   const tStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const maxAttempts = options.write ? 1 : 2; // Auto-retry 1x aman hanya untuk operasi baca
 
-  try {
+  const execPromise = (async () => {
     let json = null;
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -172,7 +195,18 @@ export async function apiCall(action, payload = {}, options = {}) {
     }
 
     return json;
+  })();
+
+  if (dedupeKey) {
+    inFlightReads.set(dedupeKey, execPromise);
+  }
+
+  try {
+    return await execPromise;
   } finally {
+    if (dedupeKey && inFlightReads.get(dedupeKey) === execPromise) {
+      inFlightReads.delete(dedupeKey);
+    }
     if (useTopLoader) {
       progressHooks.onDone(action);
     }

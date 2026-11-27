@@ -49,6 +49,13 @@ export async function renderAuditLogsPage(container, route) {
   let activeFetchId = 0;
 
   function buildCacheKey() {
+    if (
+      state.page === 1 && !state.q && !state.action_type && !state.module &&
+      !state.date_from && !state.date_to &&
+      state.sort.field === 'timestamp' && state.sort.dir === 'desc'
+    ) {
+      return 'audit:list:p1:default';
+    }
     return `audit:list:p${state.page}:l${state.limit}:q=${state.q}:a=${state.action_type}:m=${state.module}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 

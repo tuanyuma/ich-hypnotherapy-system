@@ -137,7 +137,12 @@ export async function renderPaymentsPage(container, route) {
 
   async function loadPayments({ force = false, silent = false } = {}) {
     const mySeq = ++fetchSeq;
-    const key = `payments:list:p${state.page}:q=${state.q}:t=${state.payment_type}:c=${state.category}:s=${state.status}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
+    const isDefaultPay = state.page === 1 && !state.q && !state.payment_type && !state.category &&
+      !state.status && !state.date_from && !state.date_to &&
+      state.sort.field === 'payment_code' && state.sort.dir === 'desc';
+    const key = isDefaultPay
+      ? 'payments:list:p1:default'
+      : `payments:list:p${state.page}:q=${state.q}:t=${state.payment_type}:c=${state.category}:s=${state.status}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
     const cached = storeGet(key);
 
     if (cached && cached.data && !force) {

@@ -46,6 +46,12 @@ export async function renderTherapistsPage(container, route) {
   let activeFetchId = 0;
 
   function buildCacheKey() {
+    if (
+      state.page === 1 && !state.q && !state.status && !state.service_mode &&
+      state.sort.field === 'code' && state.sort.dir === 'desc'
+    ) {
+      return 'therapists:list:p1:default';
+    }
     return `therapists:list:p${state.page}:l${state.limit}:q=${state.q}:s=${state.status}:m=${state.service_mode}:sf=${state.sort.field}:${state.sort.dir}`;
   }
 

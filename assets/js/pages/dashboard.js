@@ -9,7 +9,7 @@
 import { apiCall } from '../api.js';
 import { getUser, can, roleLabel } from '../auth.js';
 import { navigate } from '../router.js';
-import { esc, formatDateId, formatTimeId, statusBadge, renderSkeletonCards, renderSkeletonTable, toast } from '../ui.js';
+import { esc, formatDateId, formatTimeId, statusBadge, renderSkeletonDashboard, toast } from '../ui.js';
 import { storeGet, storeSet, storeIsFresh, prefetchCoreModules } from '../store.js';
 import { animateBentoStagger } from '../motion.js';
 
@@ -432,22 +432,22 @@ export async function renderDashboardPage(container, route) {
   // SWR: Tampilkan instan dari RAM bila tersedia, lalu segarkan diam-diam di latar belakang
   if (cached && cached.data && !forceRefresh) {
     paintDashboard(cached.data, true);
-    if (storeIsFresh(cacheKey, 35000)) {
-      setTimeout(() => prefetchCoreModules(), 250);
+    if (storeIsFresh(cacheKey, 45000)) {
+      setTimeout(() => prefetchCoreModules(), 120);
       return;
     }
   } else {
-    container.innerHTML = renderSkeletonCards(4) + renderSkeletonTable(5);
+    container.innerHTML = renderSkeletonDashboard();
   }
 
   try {
-    const res = await apiCall('dashboard.summary', { upcoming_limit: 15 });
+    const res = await apiCall('dashboard.summary', { upcoming_limit: 15 }, cached ? { background: true } : {});
     const { changed } = storeSet(cacheKey, res.data);
     if (!cached || forceRefresh || changed) {
       paintDashboard(res.data, !cached);
     }
-    // Prefetch modul inti (Terapis, Klien hal. 1, Jadwal hal. 1) di latar belakang
-    setTimeout(() => prefetchCoreModules(), 350);
+    // Prefetch seluruh modul inti di latar belakang diam-diam
+    setTimeout(() => prefetchCoreModules(), 150);
   } catch (err) {
     if (!cached) {
       container.innerHTML = `

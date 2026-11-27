@@ -14,8 +14,7 @@ import {
   formatDateId,
   todayInputDate,
   statusBadge,
-  renderSkeletonCards,
-  renderSkeletonTable,
+  renderSkeletonReport,
   setButtonLoading,
   toast
 } from '../ui.js';
@@ -78,7 +77,7 @@ export async function renderReportsPage(container, route) {
       </form>
     </section>
 
-    <div id="report-output">${renderSkeletonCards(4) + renderSkeletonTable(5)}</div>
+    <div id="report-output">${renderSkeletonReport()}</div>
   `;
 
   const outputWrap = container.querySelector('#report-output');

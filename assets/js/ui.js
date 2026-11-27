@@ -413,24 +413,186 @@ export function autoResizeTextarea(textarea) {
 }
 
 export function renderSkeletonCards(count = 4) {
-  let html = '<div class="kpi-grid">';
+  let html = '<div class="kpi-grid" aria-busy="true" aria-label="Memuat ringkasan...">';
   for (let i = 0; i < count; i++) {
     html += `
-      <div class="kpi-card">
-        <div class="skeleton" style="height:14px;width:60%;margin-bottom:12px;"></div>
-        <div class="skeleton" style="height:30px;width:45%;"></div>
+      <div class="kpi-card skel-card">
+        <div class="kpi-head">
+          <div class="skeleton skel-circle" style="width:36px;height:36px;border-radius:11px;"></div>
+          <div class="skeleton skel-line" style="height:12px;width:54%;"></div>
+        </div>
+        <div class="skeleton skel-line" style="height:28px;width:44%;margin-bottom:10px;"></div>
+        <div class="skeleton skel-line" style="height:10px;width:68%;"></div>
       </div>
     `;
   }
   return html + '</div>';
 }
 
-export function renderSkeletonTable(rows = 5) {
-  let html = '<div class="card">';
+export function renderSkeletonTable(rows = 6) {
+  let rowHtml = '';
+  const widths = [
+    ['86px', '58%', '44%', '74px', '104px'],
+    ['82px', '66%', '52%', '84px', '104px'],
+    ['90px', '48%', '38%', '68px', '104px'],
+    ['84px', '62%', '46%', '78px', '104px']
+  ];
   for (let i = 0; i < rows; i++) {
-    html += `<div class="skeleton" style="height:38px;width:100%;margin-bottom:10px;"></div>`;
+    const w = widths[i % widths.length];
+    rowHtml += `
+      <div class="skel-table-row">
+        <div class="skeleton skel-chip" style="width:${w[0]};"></div>
+        <div class="skel-col-stack">
+          <div class="skeleton skel-line" style="height:13px;width:${w[1]};"></div>
+          <div class="skeleton skel-line" style="height:10px;width:${w[2]};margin-top:6px;"></div>
+        </div>
+        <div class="skeleton skel-line skel-hide-sm" style="height:12px;width:96px;"></div>
+        <div class="skeleton skel-pill" style="width:${w[3]};"></div>
+        <div class="skel-actions-group">
+          <div class="skeleton skel-btn" style="width:52px;"></div>
+          <div class="skeleton skel-btn" style="width:52px;"></div>
+        </div>
+      </div>
+    `;
   }
-  return html + '</div>';
+  return `
+    <div class="skel-table-wrap" aria-busy="true" aria-label="Memuat data tabel...">
+      <div class="skel-table-head">
+        <div class="skeleton skel-line" style="height:10px;width:68px;"></div>
+        <div class="skeleton skel-line" style="height:10px;width:110px;"></div>
+        <div class="skeleton skel-line skel-hide-sm" style="height:10px;width:78px;"></div>
+        <div class="skeleton skel-line" style="height:10px;width:58px;"></div>
+        <div class="skeleton skel-line" style="height:10px;width:64px;margin-left:auto;"></div>
+      </div>
+      ${rowHtml}
+    </div>
+  `;
+}
+
+export function renderSkeletonDashboard() {
+  return `
+    <div aria-busy="true" aria-label="Memuat Dashboard...">
+      <section class="hero-bento">
+        <div class="hero-bento-top">
+          <div style="flex:1;min-width:200px;">
+            <div class="skeleton skel-line" style="height:24px;width:230px;margin-bottom:10px;"></div>
+            <div class="skeleton skel-line" style="height:13px;width:320px;max-width:90%;"></div>
+          </div>
+          <div class="skeleton skel-pill" style="height:34px;width:140px;"></div>
+        </div>
+        ${renderSkeletonCards(4)}
+      </section>
+
+      <div class="dashboard-split">
+        <div>
+          <section class="card">
+            <div class="flex-between mb-3">
+              <div>
+                <div class="skeleton skel-line" style="height:18px;width:150px;margin-bottom:8px;"></div>
+                <div class="skeleton skel-line" style="height:11px;width:240px;"></div>
+              </div>
+              <div class="skeleton skel-btn" style="width:96px;height:32px;"></div>
+            </div>
+            <div class="flex-gap mb-3">
+              <div class="skeleton skel-pill" style="width:82px;height:32px;"></div>
+              <div class="skeleton skel-pill" style="width:92px;height:32px;"></div>
+              <div class="skeleton skel-pill" style="width:92px;height:32px;"></div>
+              <div class="skeleton skel-pill" style="width:78px;height:32px;"></div>
+            </div>
+            ${renderSkeletonTable(5)}
+          </section>
+          <div class="bento-subgrid-2">
+            <section class="card">
+              <div class="skeleton skel-line" style="height:16px;width:120px;margin-bottom:16px;"></div>
+              <div class="flex-gap">
+                <div class="skeleton skel-circle" style="width:110px;height:110px;"></div>
+                <div style="flex:1;">
+                  <div class="skeleton skel-line" style="height:12px;width:85%;margin-bottom:12px;"></div>
+                  <div class="skeleton skel-line" style="height:12px;width:72%;margin-bottom:12px;"></div>
+                  <div class="skeleton skel-line" style="height:12px;width:65%;"></div>
+                </div>
+              </div>
+            </section>
+            <section class="card">
+              <div class="skeleton skel-line" style="height:16px;width:140px;margin-bottom:16px;"></div>
+              <div class="skeleton skel-line" style="height:54px;width:100%;border-radius:14px;margin-bottom:10px;"></div>
+              <div class="skeleton skel-line" style="height:54px;width:100%;border-radius:14px;"></div>
+            </section>
+          </div>
+        </div>
+        <aside>
+          <section class="card">
+            <div class="skeleton skel-line" style="height:16px;width:110px;margin-bottom:14px;"></div>
+            <div class="skeleton skel-line" style="height:56px;width:100%;border-radius:14px;margin-bottom:10px;"></div>
+            <div class="skeleton skel-line" style="height:56px;width:100%;border-radius:14px;margin-bottom:10px;"></div>
+            <div class="skeleton skel-line" style="height:56px;width:100%;border-radius:14px;margin-bottom:10px;"></div>
+            <div class="skeleton skel-line" style="height:56px;width:100%;border-radius:14px;"></div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+export function renderSkeletonDetail() {
+  return `
+    <div aria-busy="true" aria-label="Memuat profil klien...">
+      <div class="flex-between mb-3">
+        <div class="skeleton skel-btn" style="width:168px;height:36px;"></div>
+        <div class="flex-gap">
+          <div class="skeleton skel-btn" style="width:84px;height:34px;"></div>
+          <div class="skeleton skel-btn" style="width:92px;height:34px;"></div>
+          <div class="skeleton skel-btn" style="width:92px;height:34px;"></div>
+        </div>
+      </div>
+      <section class="card">
+        <div class="flex-between mb-3">
+          <div>
+            <div class="skeleton skel-line" style="height:22px;width:210px;margin-bottom:8px;"></div>
+            <div class="skeleton skel-line" style="height:12px;width:260px;"></div>
+          </div>
+          <div class="skeleton skel-pill" style="width:96px;height:28px;"></div>
+        </div>
+        <div class="form-grid form-grid-3 mt-4">
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+          <div class="skeleton skel-line" style="height:44px;width:100%;border-radius:10px;"></div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="flex-gap mb-3">
+          <div class="skeleton skel-pill" style="width:92px;height:32px;"></div>
+          <div class="skeleton skel-pill" style="width:110px;height:32px;"></div>
+          <div class="skeleton skel-pill" style="width:120px;height:32px;"></div>
+        </div>
+        ${renderSkeletonTable(4)}
+      </section>
+    </div>
+  `;
+}
+
+export function renderSkeletonReport() {
+  return `
+    <div aria-busy="true" aria-label="Menyusun laporan...">
+      <section class="hero-bento">
+        <div class="hero-bento-top">
+          <div>
+            <div class="skeleton skel-line" style="height:22px;width:260px;margin-bottom:8px;"></div>
+            <div class="skeleton skel-line" style="height:12px;width:190px;"></div>
+          </div>
+          <div class="skeleton skel-pill" style="height:34px;width:155px;"></div>
+        </div>
+        ${renderSkeletonCards(4)}
+      </section>
+      <section class="card">
+        <div class="skeleton skel-line" style="height:18px;width:210px;margin-bottom:14px;"></div>
+        ${renderSkeletonTable(5)}
+      </section>
+    </div>
+  `;
 }
 
 function buildPageSequence(current, total) {

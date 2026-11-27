@@ -22,7 +22,7 @@ import {
 import { getAllowedNavItems, parseHashRoute, navigate, getRouteGuardResult } from './router.js';
 import { esc, toast, openModal, closeModal, clearFieldErrors, showFieldErrors, topProgress, setButtonLoading } from './ui.js';
 import { animatePageEnter } from './motion.js';
-import { storeClearAll } from './store.js';
+import { storeClearAll, prefetchRouteIntent } from './store.js';
 import { renderLoginView, renderMustChangePasswordView } from './pages/login.js';
 import { renderDashboardPage } from './pages/dashboard.js';
 
@@ -94,7 +94,7 @@ const PAGE_LOADERS = {
   }
 };
 
-const APP_ASSET_VERSION = '2.3.2';
+const APP_ASSET_VERSION = '2.4.0';
 
 async function loadOptionalPage(modulePath, exportName) {
   try {
@@ -159,15 +159,26 @@ function renderNavigation(activeRouteName) {
   sidebarNav.innerHTML = Object.entries(groups).map(([groupName, items]) => `
     <div class="nav-group-label">${esc(groupName)}</div>
     ${items.map((item) => `
-      <a class="nav-link ${item.id === activeRouteName ? 'is-active' : ''}" href="${esc(item.path)}">
+      <a class="nav-link ${item.id === activeRouteName ? 'is-active' : ''}" href="${esc(item.path)}" data-route-id="${esc(item.id)}">
         <span class="nav-icon" aria-hidden="true">${item.icon}</span>
         <span>${esc(item.label)}</span>
       </a>
     `).join('')}
   `).join('');
 
+  let hoverPrefetchTimer = null;
   sidebarNav.querySelectorAll('a').forEach((link) => {
     link.addEventListener('click', () => toggleDrawer(false));
+    const routeId = link.dataset.routeId;
+    if (routeId) {
+      const triggerIntent = () => {
+        clearTimeout(hoverPrefetchTimer);
+        hoverPrefetchTimer = setTimeout(() => prefetchRouteIntent(routeId), 80);
+      };
+      link.addEventListener('mouseenter', triggerIntent);
+      link.addEventListener('focus', triggerIntent);
+      link.addEventListener('mouseleave', () => clearTimeout(hoverPrefetchTimer));
+    }
   });
 
   // Bottom navigation (maksimal 4 item utama + tombol Menu)
@@ -455,15 +466,18 @@ async function bootstrap() {
   initIdleActivityWatcher();
   initPwaSupport();
 
-  // Render rute awal segera agar halaman login tampil instan tanpa menunggu cold-start GAS
-  if (isAuthenticated()) {
-    await verifySessionWithServer();
-  }
-
+  // Render rute awal SEGERA (0ms non-blocking); bila sesi aktif, verifikasi token berjalan paralel di latar
+  const hasLocalSession = isAuthenticated();
   if (!window.location.hash) {
-    window.location.hash = isAuthenticated() ? '#/dashboard' : '#/login';
+    window.location.hash = hasLocalSession ? '#/dashboard' : '#/login';
   } else {
     renderCurrentRoute();
+  }
+
+  if (hasLocalSession) {
+    verifySessionWithServer().then((ok) => {
+      if (ok) syncUserShellMeta();
+    }).catch(() => {});
   }
 
   // Muat pengaturan publik non-sensitif (nama klinik, durasi idle) di latar belakang

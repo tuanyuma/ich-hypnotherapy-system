@@ -135,7 +135,12 @@ export async function renderCommissionsPage(container, route) {
 
   async function loadCommissions({ force = false, silent = false } = {}) {
     const mySeq = ++fetchSeq;
-    const key = `commissions:list:p${state.page}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
+    const isDefaultCom = state.page === 1 && !state.q && !state.therapist_id && !state.status &&
+      !state.date_from && !state.date_to &&
+      state.sort.field === 'commission_code' && state.sort.dir === 'desc';
+    const key = isDefaultCom
+      ? 'commissions:list:p1:default'
+      : `commissions:list:p${state.page}:q=${state.q}:t=${state.therapist_id}:s=${state.status}:f=${state.date_from}:to=${state.date_to}:sf=${state.sort.field}:${state.sort.dir}`;
     const cached = storeGet(key);
 
     if (cached && cached.data && !force) {

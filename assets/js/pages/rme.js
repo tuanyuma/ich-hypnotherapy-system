@@ -64,6 +64,13 @@ export async function renderRmePage(container, route) {
   let activeFetchId = 0;
 
   function buildCacheKey() {
+    if (
+      listState.page === 1 && !listState.q && !listState.therapist_id &&
+      !listState.session_mode && !listState.date_from && !listState.date_to &&
+      listState.sort.field === 'rme_code' && listState.sort.dir === 'desc'
+    ) {
+      return 'rme:list:p1:default';
+    }
     return `rme:list:p${listState.page}:l${listState.limit}:q=${listState.q}:t=${listState.therapist_id}:m=${listState.session_mode}:f=${listState.date_from}:to=${listState.date_to}:sf=${listState.sort.field}:${listState.sort.dir}`;
   }
 

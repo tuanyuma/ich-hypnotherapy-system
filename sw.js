@@ -6,7 +6,7 @@
  *   BERSIFAT NETWORK-ONLY dan TIDAK PERNAH disimpan di Cache Storage.
  */
 
-const SHELL_CACHE = 'ich-hypno-shell-v8';
+const SHELL_CACHE = 'ich-hypno-shell-v9';
 const SHELL_ASSETS = [
   './',
   './index.html',
@@ -40,9 +40,21 @@ const SHELL_ASSETS = [
   './assets/js/pages/settings.js'
 ];
 
+function isCodeAsset(req, url) {
+  if (req.mode === 'navigate') return true;
+  const p = url.pathname || '';
+  return p === '/' || /\.(html|js|mjs|css|json)$/i.test(p);
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS))
+    caches.open(SHELL_CACHE).then((cache) =>
+      Promise.all(
+        SHELL_ASSETS.map((asset) =>
+          cache.add(new Request(asset, { cache: 'reload' })).catch(() => {})
+        )
+      )
+    )
   );
   self.skipWaiting();
 });
@@ -69,10 +81,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Strategi Stale-While-Revalidate untuk App Shell same-origin
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      const networkFetch = fetch(req)
+  // Strategi NETWORK-FIRST untuk HTML, JS, CSS, & JSON agar versi modul ES selalu sinkron
+  // dan tidak pernah bentrok antara ui.js versi lama dengan halaman versi baru.
+  if (isCodeAsset(req, url)) {
+    event.respondWith(
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           if (res && res.status === 200 && res.type === 'basic') {
             const copy = res.clone();
@@ -80,9 +93,22 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => cached);
+        .catch(() => caches.match(req, { ignoreSearch: true }))
+    );
+    return;
+  }
 
-      return cached || networkFetch;
+  // Strategi Cache-First untuk aset statis biner (ikon, gambar)
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        if (res && res.status === 200 && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(SHELL_CACHE).then((cache) => cache.put(req, copy));
+        }
+        return res;
+      });
     })
   );
 });

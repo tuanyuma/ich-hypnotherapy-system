@@ -94,24 +94,42 @@ const PAGE_LOADERS = {
   }
 };
 
+const APP_ASSET_VERSION = '2.3.1';
+
 async function loadOptionalPage(modulePath, exportName) {
   try {
-    const mod = await import(modulePath);
+    const versionedPath = `${modulePath}?v=${APP_ASSET_VERSION}`;
+    const mod = await import(versionedPath);
     if (typeof mod[exportName] === 'function') {
+      try { sessionStorage.removeItem('ich_mod_reload_guard'); } catch (_) {}
       return mod[exportName];
     }
-  } catch (_) {
-    // Fallback jika modul halaman berada di tugas berikutnya
+    throw new Error(`Export "${exportName}" tidak ditemukan di ${modulePath}`);
+  } catch (err) {
+    console.error('[ICH] Gagal memuat modul halaman:', modulePath, err);
+    // Pemulihan otomatis 1x bila terjadi ketidakcocokan versi cache saat pembaruan aplikasi
+    try {
+      const guardKey = 'ich_mod_reload_guard';
+      if (sessionStorage.getItem(guardKey) !== APP_ASSET_VERSION) {
+        sessionStorage.setItem(guardKey, APP_ASSET_VERSION);
+        window.location.reload();
+        return () => {};
+      }
+    } catch (_) {}
+
+    return (container) => {
+      container.innerHTML = `
+        <div class="card empty-state">
+          <p class="empty-state-title">Gagal Memuat Halaman</p>
+          <p class="empty-state-desc">Terdeteksi pembaruan versi aplikasi atau koneksi terputus sementara. Silakan muat ulang halaman agar seluruh modul sinkron.</p>
+          <div class="flex-gap" style="justify-content:center;">
+            <button type="button" class="btn btn-primary" onclick="window.location.reload()">Muat Ulang Aplikasi</button>
+            <button type="button" class="btn btn-soft" onclick="window.location.hash='#/dashboard'">Kembali ke Dashboard</button>
+          </div>
+        </div>
+      `;
+    };
   }
-  return (container) => {
-    container.innerHTML = `
-      <div class="card empty-state">
-        <p class="empty-state-title">Halaman Sedang Disiapkan</p>
-        <p class="empty-state-desc">Modul ini akan aktif pada tahap implementasi frontend berikutnya.</p>
-        <button type="button" class="btn btn-soft" onclick="window.location.hash='#/dashboard'">Kembali ke Dashboard</button>
-      </div>
-    `;
-  };
 }
 
 // ============================================================================
@@ -334,10 +352,23 @@ async function renderCurrentRoute(forceRefresh = false) {
 
 function initPwaSupport() {
   if ('serviceWorker' in navigator) {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let swRefreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || swRefreshing) return;
+      swRefreshing = true;
+      window.location.reload();
+    });
+
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {
-        // Abaikan jika dijalankan di protokol non-HTTPS/non-localhost
-      });
+      navigator.serviceWorker
+        .register('./sw.js', { updateViaCache: 'none' })
+        .then((reg) => {
+          reg.update().catch(() => {});
+        })
+        .catch(() => {
+          // Abaikan jika dijalankan di protokol non-HTTPS/non-localhost
+        });
     });
   }
 

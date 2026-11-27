@@ -74,7 +74,7 @@ async function renderClientsListView(container, route) {
       <div class="card-header">
         <div>
           <h2 class="card-title">Data Induk Klien</h2>
-          <p class="card-desc">1 Klien = 1 Stable ID (anti duplikat nomor WhatsApp). Kolom Terakhir Sesi sinkron otomatis dari RME.</p>
+          <p class="card-desc">Klik baris klien untuk melihat detail &amp; riwayat lengkap. 1 Klien = 1 Stable ID (anti duplikat WhatsApp).</p>
         </div>
         ${can('clients:add') ? '<button type="button" class="btn btn-primary" id="btn-add-client">+ Klien Baru</button>' : ''}
       </div>
@@ -181,10 +181,10 @@ async function renderClientsListView(container, route) {
           </thead>
           <tbody>
             ${items.map((c) => `
-              <tr data-row-id="${esc(c.client_id)}">
+              <tr class="is-clickable-row" data-row-id="${esc(c.client_id)}" data-client-row="${esc(c.client_id)}" tabindex="0" title="Klik baris untuk melihat detail klien">
                 <td><span class="code-chip">${esc(c.client_code)}</span></td>
                 <td>
-                  <div><button type="button" class="link-btn" data-detail-cln="${esc(c.client_id)}">${esc(c.full_name)}</button></div>
+                  <div class="client-row-name">${esc(c.full_name)}</div>
                 </td>
                 <td class="font-mono text-sm">
                   <a href="https://wa.me/${esc(c.wa_normalized)}" target="_blank" rel="noopener noreferrer" class="link-btn">${esc(c.wa_normalized || c.phone_raw)}</a>
@@ -200,8 +200,7 @@ async function renderClientsListView(container, route) {
                   <div class="text-muted">${esc(c.total_sessions || 0)} sesi tercatat</div>
                 </td>
                 <td>
-                  <div class="table-actions">
-                    <button type="button" class="btn btn-soft btn-sm" data-detail-cln="${esc(c.client_id)}">Detail</button>
+                  <div class="table-actions table-actions-nowrap">
                     ${can('clients:edit') ? `<button type="button" class="btn btn-secondary btn-sm" data-edit-cln="${esc(c.client_id)}">Edit</button>` : ''}
                     ${can('clients:delete') ? `<button type="button" class="btn btn-danger-ghost btn-sm" data-del-cln="${esc(c.client_id)}">Hapus</button>` : ''}
                   </div>
@@ -219,8 +218,24 @@ async function renderClientsListView(container, route) {
     });
 
     const byId = Object.fromEntries(items.map((c) => [c.client_id, c]));
-    listWrap.querySelectorAll('[data-detail-cln]').forEach((btn) => {
-      btn.addEventListener('click', () => navigate(`#/clients/${btn.dataset.detailCln}`));
+    listWrap.querySelectorAll('[data-client-row]').forEach((row) => {
+      const openRowDetail = () => {
+        if (row.classList.contains('is-deleting')) return;
+        navigate(`#/clients/${row.dataset.clientRow}`);
+      };
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, input, select, textarea')) return;
+        const sel = window.getSelection ? window.getSelection().toString().trim() : '';
+        if (sel) return;
+        openRowDetail();
+      });
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openRowDetail();
+        }
+      });
     });
     listWrap.querySelectorAll('[data-edit-cln]').forEach((btn) => {
       btn.addEventListener('click', () => openClientFormModal(byId[btn.dataset.editCln], actor, () => {

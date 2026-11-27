@@ -1247,11 +1247,42 @@ tr.row-flash {
   transition: background var(--dur-fast);
 }
 .table tbody tr:hover { background: #F5F9FF; }
+.table tbody tr.is-clickable-row {
+  cursor: pointer;
+}
+.table tbody tr.is-clickable-row:hover {
+  background: #EAF3FF;
+}
+.table tbody tr.is-clickable-row:hover td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+.table tbody tr.is-clickable-row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: #EAF3FF;
+}
+.table tbody tr.is-clickable-row:active {
+  background: #DFECFF;
+}
+.client-row-name {
+  font-weight: 700;
+  color: var(--color-primary-ink);
+  transition: color var(--dur-fast);
+}
+.table tbody tr.is-clickable-row:hover .client-row-name {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 .table-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.table-actions-nowrap {
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .link-btn {

@@ -6,7 +6,7 @@
  *   BERSIFAT NETWORK-ONLY dan TIDAK PERNAH disimpan di Cache Storage.
  */
 
-const SHELL_CACHE = 'ich-hypno-shell-v9';
+const SHELL_CACHE = 'ich-hypno-shell-v10';
 const SHELL_ASSETS = [
   './',
   './index.html',

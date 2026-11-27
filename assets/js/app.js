@@ -94,7 +94,7 @@ const PAGE_LOADERS = {
   }
 };
 
-const APP_ASSET_VERSION = '2.3.1';
+const APP_ASSET_VERSION = '2.3.2';
 
 async function loadOptionalPage(modulePath, exportName) {
   try {

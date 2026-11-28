@@ -52,6 +52,33 @@ const PERMISSION_MODULES = [
     ]
   },
   {
+    title: 'Kalender Kegiatan',
+    items: [
+      ['calendar:view', 'Lihat Kalender'],
+      ['calendar:add', 'Tambah Kegiatan'],
+      ['calendar:edit', 'Edit Kegiatan'],
+      ['calendar:delete', 'Hapus Kegiatan']
+    ]
+  },
+  {
+    title: 'Kalender Kegiatan',
+    items: [
+      ['calendar:view', 'Lihat'],
+      ['calendar:add', 'Tambah Kegiatan'],
+      ['calendar:edit', 'Edit Kegiatan'],
+      ['calendar:delete', 'Hapus Kegiatan']
+    ]
+  },
+  {
+    title: 'Kalender Kegiatan',
+    items: [
+      ['calendar:view', 'Lihat'],
+      ['calendar:add', 'Tambah'],
+      ['calendar:edit', 'Edit'],
+      ['calendar:delete', 'Hapus']
+    ]
+  },
+  {
     title: 'Assessment Awal',
     items: [
       ['assessments:view', 'Lihat'],
@@ -135,6 +162,7 @@ const FALLBACK_ROLE_DEFAULTS = {
     'clients:view', 'clients:add', 'clients:edit', 'clients:delete', 'clients:export',
     'assessments:view', 'assessments:add', 'assessments:edit', 'assessments:delete',
     'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'calendar:view', 'calendar:add', 'calendar:edit', 'calendar:delete',
     'rme:view', 'rme:add', 'rme:edit', 'rme:delete',
     'packages:view', 'packages:add', 'packages:edit', 'packages:delete',
     'payments:view', 'payments:add', 'payments:edit', 'payments:delete',
@@ -147,6 +175,7 @@ const FALLBACK_ROLE_DEFAULTS = {
     'clients:view', 'clients:add', 'clients:edit',
     'assessments:view', 'assessments:add', 'assessments:edit', 'assessments:delete',
     'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'calendar:view', 'calendar:add', 'calendar:edit', 'calendar:delete',
     'rme:view', 'rme:add', 'rme:edit', 'rme:delete',
     'packages:view', 'commissions:view'
   ],
@@ -154,6 +183,7 @@ const FALLBACK_ROLE_DEFAULTS = {
     'dashboard:view', 'therapists:view',
     'clients:view', 'clients:add', 'clients:edit',
     'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
+    'calendar:view', 'calendar:add', 'calendar:edit',
     'packages:view', 'packages:add', 'packages:edit',
     'payments:view', 'payments:add', 'payments:edit'
   ]

@@ -121,6 +121,19 @@ export function statusBadge(type, value) {
       UNPAID: ['badge-warning', 'Belum Dibayar'],
       PAID: ['badge-success', 'Sudah Dibayar'],
       VOID: ['badge-neutral', 'Batal / Void']
+    },
+    event_status: {
+      TERJADWAL: ['badge-primary', 'Terjadwal'],
+      SELESAI: ['badge-success', 'Selesai'],
+      DIBATALKAN: ['badge-danger', 'Dibatalkan']
+    },
+    event_category: {
+      KEGIATAN_KLINIK: ['badge-primary', 'Kegiatan Klinik'],
+      RAPAT: ['badge-info', 'Rapat Tim'],
+      FOLLOW_UP: ['badge-warning', 'Follow-up'],
+      SEMINAR: ['badge-success', 'Seminar / Workshop'],
+      LIBUR: ['badge-danger', 'Libur / Cuti'],
+      LAINNYA: ['badge-neutral', 'Lainnya']
     }
   };
   const entry = (maps[type] && maps[type][value]) || ['badge-neutral', value || '-'];

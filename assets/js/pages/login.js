@@ -11,52 +11,122 @@ import { storeSet, prefetchCoreModules } from '../store.js';
 import { animatePageEnter } from '../motion.js';
 
 export function renderLoginView(container, { onLoginSuccess }) {
-  const clinicName = getPublicSettings().clinic_name || 'ICH HYPNOTHERAPY';
+  const pub = getPublicSettings() || {};
+  const clinicName = pub.clinic_name || 'ICH HYPNOTHERAPY';
+  const clinicAddress = pub.clinic_address || '';
+  const clinicPhone = pub.clinic_phone || '';
   const needsConfig = !isGasUrlConfigured();
 
   container.innerHTML = `
-    <div class="auth-card">
-      <div class="auth-header">
-        <div class="auth-logo" aria-hidden="true">ICH</div>
-        <h1 class="auth-title">${esc(clinicName)}</h1>
-        <p class="auth-subtitle">Portal Internal Staf Klinik</p>
-      </div>
-
-      ${needsConfig ? `
-        <div class="auth-notice" role="alert">
-          <strong>Konfigurasi Backend Belum Diisi:</strong>
-          Buka <code>frontend/assets/js/config.js</code> dan ganti <code>GAS_URL</code> dengan URL Web App GAS (<code>/exec</code>) Anda.
-        </div>
-      ` : ''}
-
-      <form id="login-form" novalidate>
-        <div class="field">
-          <label for="login-username">Username <span class="req-star">*</span></label>
-          <input id="login-username" name="username" type="text" class="input"
-            autocomplete="username" autocapitalize="none" spellcheck="false"
-            placeholder="Masukkan username staf" required>
-        </div>
-
-        <div class="field">
-          <label for="login-password">Password <span class="req-star">*</span></label>
-          <div class="input-password-wrap">
-            <input id="login-password" name="password" type="password" class="input"
-              autocomplete="current-password" placeholder="Masukkan password" required>
-            <button type="button" id="btn-toggle-login-pw" class="btn-toggle-pw"
-              aria-pressed="false" aria-label="Tampilkan atau sembunyikan password">Tampil</button>
+    <div class="auth-split-card">
+      <section class="auth-info-panel" aria-label="Informasi Klinik dan Sistem">
+        <div class="auth-info-top">
+          <div class="auth-info-badge">Portal Internal Staf Klinik</div>
+          <div class="auth-info-brand">
+            <div class="auth-logo auth-logo-light" aria-hidden="true">ICH</div>
+            <div>
+              <h1 class="auth-title auth-info-title">${esc(clinicName)}</h1>
+              <p class="auth-info-sub">Sistem Manajemen Klinik &amp; Rekam Medis Terpadu</p>
+            </div>
           </div>
+          <p class="auth-info-lead">
+            Kelola seluruh operasional klinik hipnoterapi—mulai dari pendaftaran klien, kalender kegiatan &amp; penjadwalan sesi, assessment, RME, hingga keuangan—dalam satu portal yang cepat dan aman.
+          </p>
         </div>
 
-        <div id="login-global-error" class="form-alert-error mb-3" role="alert" hidden></div>
+        <ul class="auth-info-list">
+          <li class="auth-info-item">
+            <span class="auth-info-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+            </span>
+            <div>
+              <strong>Data Klien &amp; Riwayat Terpadu</strong>
+              <span>ID klien permanen anti-duplikat WhatsApp dengan histori sesi lengkap.</span>
+            </div>
+          </li>
+          <li class="auth-info-item">
+            <span class="auth-info-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2"/></svg>
+            </span>
+            <div>
+              <strong>Kalender Kegiatan &amp; Penjadwalan</strong>
+              <span>Pantau jadwal sesi terapi harian dan agenda klinik dalam satu kalender.</span>
+            </div>
+          </li>
+          <li class="auth-info-item">
+            <span class="auth-info-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+            </span>
+            <div>
+              <strong>Assessment &amp; RME Klinis Privat</strong>
+              <span>Context Reference otomatis per klien dengan isolasi hak akses peran.</span>
+            </div>
+          </li>
+          <li class="auth-info-item">
+            <span class="auth-info-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+            </span>
+            <div>
+              <strong>Paket, Kas, Komisi &amp; Laporan</strong>
+              <span>Kontrol kuota paket klien, bagi hasil terapis, dan cetak laporan PDF/CSV.</span>
+            </div>
+          </li>
+        </ul>
 
-        <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block mt-2">
-          Masuk ke Aplikasi
-        </button>
-      </form>
+        <div class="auth-info-footer">
+          <div class="auth-info-sec-pill">🔒 Akses Terproteksi • Sesi Otomatis Keluar Saat Tidak Aktif</div>
+          ${(clinicAddress || clinicPhone) ? `
+            <div class="auth-info-contact">
+              ${clinicAddress ? `<span>📍 ${esc(clinicAddress)}</span>` : ''}
+              ${clinicPhone ? `<span>📞 ${esc(clinicPhone)}</span>` : ''}
+            </div>
+          ` : ''}
+        </div>
+      </section>
 
-      <p class="auth-footer-note">
-        Akses terbatas untuk staf internal. Sesi berakhir otomatis saat tab ditutup atau tidak aktif.
-      </p>
+      <section class="auth-form-panel" aria-label="Form Masuk Staf">
+        <div class="auth-form-head">
+          <span class="auth-form-eyebrow">Masuk Staf Internal</span>
+          <h2 class="auth-form-title">Selamat Datang Kembali</h2>
+          <p class="auth-subtitle">Silakan masukkan username dan password akun Anda untuk melanjutkan.</p>
+        </div>
+
+        ${needsConfig ? `
+          <div class="auth-notice" role="alert">
+            <strong>Konfigurasi Backend Belum Diisi:</strong>
+            Buka <code>frontend/assets/js/config.js</code> dan ganti <code>GAS_URL</code> dengan URL Web App GAS (<code>/exec</code>) Anda.
+          </div>
+        ` : ''}
+
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="login-username">Username <span class="req-star">*</span></label>
+            <input id="login-username" name="username" type="text" class="input"
+              autocomplete="username" autocapitalize="none" spellcheck="false"
+              placeholder="Masukkan username staf" required>
+          </div>
+
+          <div class="field">
+            <label for="login-password">Password <span class="req-star">*</span></label>
+            <div class="input-password-wrap">
+              <input id="login-password" name="password" type="password" class="input"
+                autocomplete="current-password" placeholder="Masukkan password" required>
+              <button type="button" id="btn-toggle-login-pw" class="btn-toggle-pw"
+                aria-pressed="false" aria-label="Tampilkan atau sembunyikan password">Tampil</button>
+            </div>
+          </div>
+
+          <div id="login-global-error" class="form-alert-error mb-3" role="alert" hidden></div>
+
+          <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block mt-2">
+            Masuk ke Aplikasi
+          </button>
+        </form>
+
+        <p class="auth-footer-note">
+          Butuh bantuan akses atau lupa password? Hubungi <strong>Admin / Owner</strong> klinik Anda.
+        </p>
+      </section>
     </div>
   `;
 
@@ -115,7 +185,7 @@ export function renderLoginView(container, { onLoginSuccess }) {
     }
   });
 
-  animatePageEnter(container.querySelector('.auth-card'));
+  animatePageEnter(container.querySelector('.auth-split-card'));
   form.username.focus();
 }
 

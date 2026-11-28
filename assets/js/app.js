@@ -57,6 +57,21 @@ const PAGE_LOADERS = {
     subtitle: 'Penjadwalan sesi Online/Offline dan pengingat WhatsApp',
     load: () => loadOptionalPage('./pages/appointments.js', 'renderAppointmentsPage')
   },
+  calendar: {
+    title: 'Kalender Kegiatan & Jadwal',
+    subtitle: 'Pantau kegiatan klinik hari ini, agenda bulanan, dan jadwal sesi terapi',
+    load: () => loadOptionalPage('./pages/calendar.js', 'renderCalendarPage')
+  },
+  calendar: {
+    title: 'Kalender Kegiatan & Jadwal',
+    subtitle: 'Agenda hari ini, jadwal sesi terapi, dan kegiatan internal klinik dalam tampilan kalender',
+    load: () => loadOptionalPage('./pages/calendar.js', 'renderCalendarPage')
+  },
+  calendar: {
+    title: 'Kalender Kegiatan & Jadwal',
+    subtitle: 'Ringkasan kegiatan hari ini, jadwal sesi terapi, dan agenda internal klinik',
+    load: () => loadOptionalPage('./pages/calendar.js', 'renderCalendarPage')
+  },
   rme: {
     title: 'RME / Sesi Terapi',
     subtitle: 'Rekam medis sesi terapi dengan Context Reference otomatis',
@@ -94,7 +109,7 @@ const PAGE_LOADERS = {
   }
 };
 
-const APP_ASSET_VERSION = '2.4.0';
+const APP_ASSET_VERSION = '2.5.0';
 
 async function loadOptionalPage(modulePath, exportName) {
   try {
@@ -209,7 +224,6 @@ function syncUserShellMeta() {
   const nameEl = document.getElementById('sidebar-user-name');
   const roleEl = document.getElementById('sidebar-user-role');
   const topBadge = document.getElementById('topbar-role-badge');
-  const topCta = document.getElementById('btn-topbar-cta');
 
   if (brandEl) brandEl.textContent = clinicName;
   if (user) {
@@ -217,7 +231,6 @@ function syncUserShellMeta() {
     if (nameEl) nameEl.textContent = user.full_name || user.username;
     if (roleEl) roleEl.textContent = roleLabel(user.role);
     if (topBadge) topBadge.textContent = roleLabel(user.role);
-    if (topCta) topCta.hidden = !can('clients:add');
   }
 }
 
@@ -454,7 +467,6 @@ async function bootstrap() {
   document.getElementById('btn-logout')?.addEventListener('click', () => performLogout());
   document.getElementById('btn-change-password')?.addEventListener('click', () => openChangePasswordModal());
   document.getElementById('btn-refresh-page')?.addEventListener('click', () => renderCurrentRoute(true));
-  document.getElementById('btn-topbar-cta')?.addEventListener('click', () => navigate('#/clients?new=1'));
   document.getElementById('topbar-search-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const input = document.getElementById('topbar-search-input');

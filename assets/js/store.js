@@ -156,6 +156,9 @@ export function prefetchCoreModules(force = false) {
           b.commissions_page1.meta
         );
       }
+      if (b.calendar_current_month && b.calendar_current_month.month) {
+        storeSet(`calendar:month:${b.calendar_current_month.month}:`, b.calendar_current_month);
+      }
       lastPrefetchAt = Date.now();
     })
     .catch(() => {
@@ -204,6 +207,44 @@ export function prefetchRouteIntent(routeId) {
     if (!storeIsFresh(rKey, 30000)) {
       apiCall('reports.summary', { date_from: monthStart, date_to: today }, silentOpts)
         .then((res) => res && res.data && storeSet(rKey, res.data))
+        .catch(() => {});
+    }
+    return;
+  }
+  if (routeId === 'calendar') {
+    const now = new Date();
+    const wib = new Date(now.getTime() + (7 * 60 + now.getTimezoneOffset()) * 60000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const month = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}`;
+    const cKey = `calendar:month:${month}:trp=`;
+    if (!storeIsFresh(cKey, 30000)) {
+      apiCall('calendar.month', { month }, silentOpts)
+        .then((res) => res && res.data && storeSet(cKey, res.data))
+        .catch(() => {});
+    }
+    return;
+  }
+  if (routeId === 'calendar') {
+    const now = new Date();
+    const wib = new Date(now.getTime() + (7 * 60 + now.getTimezoneOffset()) * 60000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const monthKey = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}`;
+    const cKey = `calendar:month:${monthKey}:`;
+    if (!storeIsFresh(cKey, 30000)) {
+      apiCall('calendar.month', { month: monthKey }, silentOpts)
+        .then((res) => res && res.data && storeSet(cKey, res.data))
+        .catch(() => {});
+    }
+    return;
+  }
+  if (routeId === 'calendar') {
+    const now = new Date();
+    const wib = new Date(now.getTime() + (7 * 60 + now.getTimezoneOffset()) * 60000);
+    const ym = `${wib.getFullYear()}-${String(wib.getMonth() + 1).padStart(2, '0')}`;
+    const cKey = `calendar:month:${ym}:trp=`;
+    if (!storeIsFresh(cKey, 30000)) {
+      apiCall('calendar.month', { month: ym }, silentOpts)
+        .then((res) => res && res.data && storeSet(cKey, res.data))
         .catch(() => {});
     }
     return;

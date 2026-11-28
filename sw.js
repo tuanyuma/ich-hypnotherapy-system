@@ -6,7 +6,7 @@
  *   BERSIFAT NETWORK-ONLY dan TIDAK PERNAH disimpan di Cache Storage.
  */
 
-const SHELL_CACHE = 'ich-hypno-shell-v11';
+const SHELL_CACHE = 'ich-hypno-shell-v12';
 const SHELL_ASSETS = [
   './',
   './index.html',
@@ -31,6 +31,7 @@ const SHELL_ASSETS = [
   './assets/js/pages/clients.js',
   './assets/js/pages/assessments.js',
   './assets/js/pages/appointments.js',
+  './assets/js/pages/calendar.js',
   './assets/js/pages/rme.js',
   './assets/js/pages/packages.js',
   './assets/js/pages/payments.js',

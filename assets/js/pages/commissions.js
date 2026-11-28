@@ -10,6 +10,8 @@ import { can, getUser } from '../auth.js';
 import {
   esc,
   formatRupiah,
+  formatRupiahInput,
+  parseRupiahInput,
   formatDateId,
   todayInputDate,
   statusBadge,
@@ -361,11 +363,19 @@ export async function renderCommissionsPage(container, route) {
             </div>
             <div class="field">
               <label for="cm-base">Nominal Dasar Layanan (Rp)</label>
-              <input id="cm-base" name="base_amount" class="input" type="number" min="0" step="1000" value="500000">
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="cm-base" name="base_amount" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input value="500.000" placeholder="500.000">
+              </div>
             </div>
             <div class="field field-span-full">
               <label for="cm-amt">Nominal Komisi Diterima Terapis (Rp) <span class="req-star">*</span></label>
-              <input id="cm-amt" name="commission_amount" class="input" type="number" min="1" step="1000" placeholder="Kosongkan untuk hitung otomatis sesuai skema terapis">
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="cm-amt" name="commission_amount" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input placeholder="Kosongkan untuk hitung otomatis sesuai skema terapis">
+              </div>
             </div>
             <div class="field field-span-full">
               <label>Klien Terkait (Opsional)</label>
@@ -396,8 +406,8 @@ export async function renderCommissionsPage(container, route) {
         await apiCall('commissions.create', {
           therapist_id: form.therapist_id.value,
           earned_date: form.earned_date.value,
-          base_amount: Number(form.base_amount.value || 0),
-          commission_amount: form.commission_amount.value ? Number(form.commission_amount.value) : '',
+          base_amount: parseRupiahInput(form.base_amount.value),
+          commission_amount: parseRupiahInput(form.commission_amount.value, { allowEmpty: true }),
           client_id: ac.getValue(),
           notes: form.notes.value.trim()
         }, { write: true });

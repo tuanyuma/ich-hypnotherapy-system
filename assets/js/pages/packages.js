@@ -11,6 +11,8 @@ import { navigate } from '../router.js';
 import {
   esc,
   formatRupiah,
+  formatRupiahInput,
+  parseRupiahInput,
   formatDateId,
   todayInputDate,
   statusBadge,
@@ -373,7 +375,11 @@ export async function renderPackagesPage(container, route) {
             </div>
             <div class="field">
               <label for="cpk-price">Harga Paket (Rp)</label>
-              <input id="cpk-price" name="price" class="input" type="number" min="0" step="1000" value="${esc(isEdit ? existing.price : 0)}">
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="cpk-price" name="price" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input value="${esc(formatRupiahInput(isEdit ? existing.price : 0))}" placeholder="0">
+              </div>
             </div>
             ${isEdit ? `
               <div class="field">
@@ -424,7 +430,7 @@ export async function renderPackagesPage(container, route) {
       if (!opt || !opt.value) return;
       form.package_name.value = opt.dataset.name || '';
       totalInput.value = opt.dataset.sessions || 4;
-      form.price.value = opt.dataset.price || 0;
+      form.price.value = formatRupiahInput(opt.dataset.price || 0);
       activeValidityDays = Number(opt.dataset.days || 90);
       if (startInput.value) {
         expiryInput.value = addDaysClientDate(startInput.value, activeValidityDays);
@@ -471,7 +477,7 @@ export async function renderPackagesPage(container, route) {
         therapist_id: form.therapist_id ? form.therapist_id.value : '',
         total_sessions: Number(totalInput.value || 1),
         used_sessions: Number(usedInput.value || 0),
-        price: Number(form.price.value || 0),
+        price: parseRupiahInput(form.price.value),
         start_date: startInput.value,
         expiry_date: expiryInput.value,
         notes: form.notes.value.trim()
@@ -661,7 +667,11 @@ export async function renderPackagesPage(container, route) {
             </div>
             <div class="field">
               <label for="mp-price">Harga Paket (Rp) <span class="req-star">*</span></label>
-              <input id="mp-price" name="price" class="input" type="number" min="0" step="1000" value="${esc(isEdit ? existing.price : 1500000)}" required>
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="mp-price" name="price" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input value="${esc(formatRupiahInput(isEdit ? existing.price : 1500000))}" placeholder="1.500.000" required>
+              </div>
             </div>
             <div class="field">
               <label for="mp-mode">Mode Layanan</label>
@@ -703,7 +713,7 @@ export async function renderPackagesPage(container, route) {
         package_name: form.package_name.value.trim(),
         total_sessions: Number(form.total_sessions.value || 1),
         validity_days: Number(form.validity_days.value || 90),
-        price: Number(form.price.value || 0),
+        price: parseRupiahInput(form.price.value),
         service_mode: form.service_mode.value,
         status: form.status.value,
         description: form.description.value.trim()

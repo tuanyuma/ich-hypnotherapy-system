@@ -10,6 +10,8 @@ import { can } from '../auth.js';
 import {
   esc,
   formatRupiah,
+  formatRupiahInput,
+  parseRupiahInput,
   statusBadge,
   renderSkeletonTable,
   renderPagination,
@@ -296,8 +298,11 @@ export async function renderTherapistsPage(container, route) {
             </div>
             <div class="field">
               <label for="t-fee">Tarif Sesi (Rp)</label>
-              <input id="t-fee" name="session_fee" class="input" type="number" min="0" step="1000"
-                value="${esc(existing ? existing.session_fee : 0)}">
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="t-fee" name="session_fee" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input value="${esc(formatRupiahInput(existing ? existing.session_fee : 0))}" placeholder="500.000">
+              </div>
             </div>
             <div class="field">
               <label for="t-mode">Mode Layanan</label>
@@ -316,8 +321,12 @@ export async function renderTherapistsPage(container, route) {
             </div>
             <div class="field">
               <label for="t-comm-val">Nilai Komisi</label>
-              <input id="t-comm-val" name="commission_value" class="input" type="number" min="0"
-                value="${esc(existing ? existing.commission_value : 0)}">
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" id="t-comm-prefix" aria-hidden="true">${existing && existing.commission_type === 'FIXED' ? 'Rp' : '%'}</span>
+                <input id="t-comm-val" name="commission_value" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input data-rupiah-active="${existing && existing.commission_type === 'FIXED' ? '1' : '0'}"
+                  value="${esc(existing ? (existing.commission_type === 'FIXED' ? formatRupiahInput(existing.commission_value) : existing.commission_value) : 0)}">
+              </div>
             </div>
             <div class="field">
               <label for="t-status">Status</label>
@@ -342,6 +351,18 @@ export async function renderTherapistsPage(container, route) {
 
     const form = modal.querySelector('#therapist-form');
     const saveBtn = modal.querySelector('#btn-save-trp');
+    const commTypeEl = modal.querySelector('#t-comm-type');
+    const commPrefixEl = modal.querySelector('#t-comm-prefix');
+    const commValEl = modal.querySelector('#t-comm-val');
+    if (commTypeEl && commPrefixEl && commValEl) {
+      commTypeEl.addEventListener('change', () => {
+        const isFixed = commTypeEl.value === 'FIXED';
+        commPrefixEl.textContent = isFixed ? 'Rp' : '%';
+        commValEl.dataset.rupiahActive = isFixed ? '1' : '0';
+        const rawNum = parseRupiahInput(commValEl.value);
+        commValEl.value = isFixed ? formatRupiahInput(rawNum) : String(rawNum);
+      });
+    }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearFieldErrors(form);
@@ -354,9 +375,11 @@ export async function renderTherapistsPage(container, route) {
         email: form.email.value.trim(),
         area: form.area.value.trim(),
         specialization: form.specialization.value.trim(),
-        session_fee: Number(form.session_fee.value || 0),
+        session_fee: parseRupiahInput(form.session_fee.value),
         commission_type: form.commission_type.value,
-        commission_value: Number(form.commission_value.value || 0),
+        commission_value: form.commission_type.value === 'FIXED'
+          ? parseRupiahInput(form.commission_value.value)
+          : Number(String(form.commission_value.value || '0').replace(/[^\d.]/g, '') || 0),
         service_mode: form.service_mode.value,
         status: form.status.value,
         notes: form.notes.value.trim()

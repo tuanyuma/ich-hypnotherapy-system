@@ -11,6 +11,8 @@ import { navigate } from '../router.js';
 import {
   esc,
   formatRupiah,
+  formatRupiahInput,
+  parseRupiahInput,
   formatDateId,
   todayInputDate,
   statusBadge,
@@ -334,7 +336,11 @@ export async function renderPaymentsPage(container, route) {
             </div>
             <div class="field">
               <label for="py-amount">Nominal (Rp) <span class="req-star">*</span></label>
-              <input id="py-amount" name="amount" class="input" type="number" min="1" step="1000" value="${esc(isEdit ? existing.amount : '')}" placeholder="500000" required>
+              <div class="input-currency-wrap">
+                <span class="input-currency-prefix" aria-hidden="true">Rp</span>
+                <input id="py-amount" name="amount" class="input" type="text" inputmode="numeric" autocomplete="off"
+                  data-rupiah-input value="${esc(isEdit ? formatRupiahInput(existing.amount) : '')}" placeholder="500.000" required>
+              </div>
             </div>
             <div class="field">
               <label for="py-status">Status Pembayaran</label>
@@ -404,7 +410,7 @@ export async function renderPaymentsPage(container, route) {
         payment_type: form.payment_type.value,
         category: form.category.value,
         payment_method: form.payment_method.value,
-        amount: Number(form.amount.value || 0),
+        amount: parseRupiahInput(form.amount.value),
         status: form.status.value,
         client_id: ac.getValue(),
         therapist_id: form.therapist_id.value,

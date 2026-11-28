@@ -22,6 +22,53 @@ export function formatRupiah(amount) {
   return 'Rp ' + Math.round(num).toLocaleString('id-ID');
 }
 
+export function formatRupiahInput(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  const digits = String(val).replace(/\D+/g, '');
+  if (!digits) return '';
+  const clean = digits.replace(/^0+(?=\d)/, '');
+  return clean.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+export function parseRupiahInput(val, { allowEmpty = false } = {}) {
+  const digits = String(val === undefined || val === null ? '' : val).replace(/\D+/g, '');
+  if (!digits) return allowEmpty ? '' : 0;
+  return Number(digits);
+}
+
+export function bindRupiahInputs(rootEl) {
+  if (!rootEl) return;
+  rootEl.querySelectorAll('[data-rupiah-input]').forEach((input) => {
+    if (input.dataset.rupiahBound === '1') return;
+    input.dataset.rupiahBound = '1';
+
+    const applyFormat = () => {
+      if (input.dataset.rupiahActive === '0') return;
+      const raw = input.value;
+      const selStart = input.selectionStart || raw.length;
+      const digitsBeforeCaret = raw.slice(0, selStart).replace(/\D+/g, '').length;
+      const formatted = formatRupiahInput(raw);
+      if (formatted === raw) return;
+      input.value = formatted;
+
+      // Pertahankan posisi kursor secara akurat setelah titik ribuan disisipkan
+      let nextPos = 0;
+      let seenDigits = 0;
+      while (nextPos < formatted.length && seenDigits < digitsBeforeCaret) {
+        if (/\d/.test(formatted[nextPos])) seenDigits++;
+        nextPos++;
+      }
+      try { input.setSelectionRange(nextPos, nextPos); } catch (_) {}
+    };
+
+    if (input.value && input.dataset.rupiahActive !== '0') {
+      input.value = formatRupiahInput(input.value);
+    }
+    input.addEventListener('input', applyFormat);
+    input.addEventListener('blur', applyFormat);
+  });
+}
+
 export function formatDateId(dateStr) {
   const s = String(dateStr || '').trim();
   if (!s) return '-';
@@ -314,6 +361,7 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', closa
     </div>
   `;
   root.hidden = false;
+  bindRupiahInputs(root);
   animateModalOpen(root);
 
   const onKeyDown = (e) => {

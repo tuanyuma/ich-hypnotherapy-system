@@ -149,7 +149,8 @@ const PERMISSION_MODULES = [
       ['users:delete', 'Nonaktifkan User'],
       ['users:reset_password', 'Reset Sandi'],
       ['audit:view', 'Lihat Audit Log'],
-      ['settings:view', 'Lihat Pengaturan']
+      ['settings:view', 'Lihat Pengaturan'],
+      ['ai:use', 'Gunakan Asisten AI']
     ]
   }
 ];
@@ -168,16 +169,16 @@ const FALLBACK_ROLE_DEFAULTS = {
     'payments:view', 'payments:add', 'payments:edit', 'payments:delete',
     'commissions:view', 'commissions:add', 'commissions:edit', 'commissions:delete',
     'reports:view', 'reports:export',
-    'audit:view', 'settings:view'
+    'audit:view', 'settings:view', 'ai:use'
   ],
   THERAPIST: [
     'dashboard:view', 'therapists:view',
     'clients:view', 'clients:add', 'clients:edit',
     'assessments:view', 'assessments:add', 'assessments:edit', 'assessments:delete',
     'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
-    'calendar:view', 'calendar:add', 'calendar:edit', 'calendar:delete',
+    'calendar:view', 'calendar:add', 'calendar:edit',
     'rme:view', 'rme:add', 'rme:edit', 'rme:delete',
-    'packages:view', 'commissions:view'
+    'packages:view', 'commissions:view', 'ai:use'
   ],
   CUSTOMER_SERVICE: [
     'dashboard:view', 'therapists:view',
@@ -185,7 +186,7 @@ const FALLBACK_ROLE_DEFAULTS = {
     'appointments:view', 'appointments:add', 'appointments:edit', 'appointments:delete',
     'calendar:view', 'calendar:add', 'calendar:edit',
     'packages:view', 'packages:add', 'packages:edit',
-    'payments:view', 'payments:add', 'payments:edit'
+    'payments:view', 'payments:add', 'payments:edit', 'ai:use'
   ]
 };
 

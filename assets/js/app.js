@@ -23,6 +23,7 @@ import { getAllowedNavItems, parseHashRoute, navigate, getRouteGuardResult } fro
 import { esc, toast, openModal, closeModal, clearFieldErrors, showFieldErrors, topProgress, setButtonLoading } from './ui.js';
 import { animatePageEnter } from './motion.js';
 import { storeClearAll, prefetchRouteIntent } from './store.js';
+import { syncAiAssistantVisibility, resetAiAssistantState } from './aiAssistant.js';
 import { renderLoginView, renderMustChangePasswordView } from './pages/login.js';
 import { renderDashboardPage } from './pages/dashboard.js';
 
@@ -109,7 +110,7 @@ const PAGE_LOADERS = {
   }
 };
 
-const APP_ASSET_VERSION = '2.5.1';
+const APP_ASSET_VERSION = '2.6.0';
 
 async function loadOptionalPage(modulePath, exportName) {
   try {
@@ -303,6 +304,7 @@ async function renderCurrentRoute(forceRefresh = false) {
   if (guard.mustChangePassword) {
     appShell.hidden = true;
     authRoot.hidden = false;
+    syncAiAssistantVisibility();
     renderMustChangePasswordView(authRoot, {
       onComplete: () => navigate('#/dashboard')
     });
@@ -331,6 +333,7 @@ async function renderCurrentRoute(forceRefresh = false) {
   if (route.name === 'login') {
     appShell.hidden = true;
     authRoot.hidden = false;
+    syncAiAssistantVisibility();
     renderLoginView(authRoot, {
       onLoginSuccess: (user) => {
         if (user && user.must_change_password) {
@@ -347,6 +350,7 @@ async function renderCurrentRoute(forceRefresh = false) {
   appShell.hidden = false;
   syncUserShellMeta();
   renderNavigation(route.name);
+  syncAiAssistantVisibility();
 
   if (guard.forbidden) {
     document.getElementById('page-title').textContent = 'Akses Ditolak';
@@ -449,6 +453,7 @@ async function bootstrap() {
 
   setSessionClearedHandler((reason) => {
     storeClearAll();
+    resetAiAssistantState();
     if (reason === 'IDLE_TIMEOUT') {
       toast('Sesi berakhir otomatis karena tidak ada aktivitas.', 'warning');
     } else if (reason === 'LOGOUT') {
